@@ -1,0 +1,88 @@
+name: Deploy To Azure
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
+
+env:
+  AZD_ENV_NAME: JJAI-resumeImprover
+  AZURE_LOCATION: westcentralus
+  AZURE_SWA_LOCATION: eastus2
+  LLM_MODEL: gpt-4o-mini
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Azure Developer CLI
+        uses: Azure/setup-azd@v2
+
+      - name: Azure login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Initialize azd environment
+        shell: bash
+        run: |
+          azd env new "$AZD_ENV_NAME" --no-prompt
+          azd env set AZURE_LOCATION "$AZURE_LOCATION"
+          azd env set AZURE_SWA_LOCATION "$AZURE_SWA_LOCATION"
+          azd env set AZURE_SUBSCRIPTION_ID "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+          azd env set LLM_MODEL "$LLM_MODEL"
+
+      - name: Provision infrastructure
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_MODELS_TOKEN }}
+        run: azd provision --no-prompt
+
+      - name: Load azd outputs
+        shell: bash
+        run: eval "$(azd env get-values)" && echo "BACKEND_URL=$BACKEND_URL" >> "$GITHUB_ENV"
+
+      - name: Build frontend
+        shell: bash
+        working-directory: frontend
+        run: |
+          printf 'VITE_API_BASE_URL=%s/api\n' "$BACKEND_URL" > .env.production
+          npm ci
+          npm run build
+
+      - name: Deploy backend
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_MODELS_TOKEN }}
+        run: azd deploy backend
+
+      - name: Deploy frontend
+        shell: bash
+        run: azd deploy frontend

@@ -4,6 +4,7 @@ param name string
 param location string
 param tags object = {}
 param appServicePlanId string
+param allowedOrigins string = '*'
 
 @secure()
 param githubToken string
@@ -19,8 +20,8 @@ resource appService 'Microsoft.Web/sites@2022-09-01' = {
     httpsOnly: true
     siteConfig: {
       linuxFxVersion: 'PYTHON|3.12'
-      // Tell App Service to run our startup.sh after pip install
-      appCommandLine: 'bash /home/site/wwwroot/startup.sh'
+      // Oryx runs the built app from a temp extraction path, so use a relative startup command.
+      appCommandLine: 'bash startup.sh'
       // Ensure the build step (pip install -r requirements.txt) runs during deployment
       scmType: 'None'
       appSettings: [
@@ -42,7 +43,7 @@ resource appService 'Microsoft.Web/sites@2022-09-01' = {
         }
         {
           name: 'ALLOWED_ORIGINS'
-          value: '*'  // Update to Static Web App URL after first deploy
+          value: allowedOrigins
         }
         {
           name: 'PYTHONDONTWRITEBYTECODE'
@@ -54,6 +55,22 @@ resource appService 'Microsoft.Web/sites@2022-09-01' = {
         }
       ]
     }
+  }
+}
+
+resource appServiceScmPublishingPolicy 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2022-09-01' = {
+  parent: appService
+  name: 'scm'
+  properties: {
+    allow: true
+  }
+}
+
+resource appServiceFtpPublishingPolicy 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2022-09-01' = {
+  parent: appService
+  name: 'ftp'
+  properties: {
+    allow: true
   }
 }
 

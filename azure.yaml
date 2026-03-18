@@ -14,32 +14,17 @@ services:
     project: ./backend
     language: python
     host: appservice
-    hooks:
-      postdeploy:
-        # Nothing extra needed — startup.sh runs alembic on App Service startup
 
   frontend:
     project: ./frontend
+    dist: dist
     language: js
     host: staticwebapp
-    hooks:
-      predeploy:
-        # Inject backend URL into the Vite build so API calls point at Azure
-        # azd sets BACKEND_URL as an output from infra provisioning
-        shell: sh
-        run: |
-          echo "VITE_API_BASE_URL=${BACKEND_URL}/api" > .env.production
-        continueOnError: false
-        interactive: false
 
-hooks:
-  preprovision:
-    shell: sh
-    run: |
-      if [ -z "$GITHUB_TOKEN" ]; then
-        echo "ERROR: GITHUB_TOKEN env var is required for GitHub Models AI inference."
-        echo "Create a token at https://github.com/settings/tokens (add Models permission)."
-        exit 1
-      fi
-    continueOnError: false
-    interactive: false
+workflows:
+  up:
+    steps:
+      - azd: provision
+      - azd: package
+      - azd: deploy --all
+

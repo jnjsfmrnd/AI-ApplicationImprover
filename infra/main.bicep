@@ -49,6 +49,7 @@ module appService 'modules/appservice.bicep' = {
     appServicePlanId: appServicePlan.outputs.id
     githubToken: githubToken
     llmModel: llmModel
+    allowedOrigins: 'https://${staticWebApp.outputs.defaultHostname}'
   }
 }
 

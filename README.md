@@ -17,6 +17,8 @@ It includes an Agent Orchestrator + MCP-style tool adapters and supports in-app 
 - AI: **GitHub Models** via `azure-ai-inference` SDK (gpt-4o-mini, completely free)
 - IaC: Azure Developer CLI (azd) + Bicep
 
+> **Note on App Service tier:** The project uses **B1** (Basic tier, ~$13/month). F1 Free tier was tested but its 60 CPU-min/day shared quota causes Kudu/SCM deploys to fail whenever the cap is hit, making it unreliable for portfolio demos.
+
 ---
 
 ## Local development
@@ -103,7 +105,7 @@ Open <http://localhost:5173>.
    2. Provision an App Service Plan (F1 free) + App Service (Python 3.12)
    3. Provision an Azure Static Web App (Free tier)
    4. Build & deploy the FastAPI backend (pip install runs on App Service)
-   5. Build the React frontend with `VITE_API_BASE_URL` set to your App Service URL, then deploy to Static Web Apps
+   5. Deploy the React frontend from `frontend/dist` to Static Web Apps
 
 5. **After first deploy — tighten CORS (optional but recommended):**
    ```bash
@@ -121,6 +123,53 @@ azd deploy          # redeploy both services
 azd deploy backend  # backend only
 azd deploy frontend # frontend only
 ```
+
+Before `azd deploy frontend`, rebuild the Vite app so `frontend/dist` contains the latest production assets:
+```bash
+cd frontend
+npm run build
+cd ..
+azd deploy frontend
+```
+
+## GitHub Actions deployment
+
+This repo includes a production deployment workflow at [.github/workflows/deploy-azure.yml](.github/workflows/deploy-azure.yml).
+
+Add these GitHub repository secrets:
+- `AZURE_CLIENT_ID`
+- `AZURE_TENANT_ID`
+- `AZURE_SUBSCRIPTION_ID`
+- `GH_MODELS_TOKEN` - GitHub PAT with Models access for the backend inference calls
+
+Add these GitHub repository variables if you want to override the defaults:
+- `AZD_ENV_NAME`
+- `AZURE_LOCATION`
+- `AZURE_SWA_LOCATION`
+- `LLM_MODEL`
+
+The committed workflow currently defaults to:
+- `AZD_ENV_NAME=JJAI-resumeImprover`
+- `AZURE_LOCATION=westcentralus`
+- `AZURE_SWA_LOCATION=eastus2`
+- `LLM_MODEL=gpt-4o-mini`
+
+If you want different values, either edit [.github/workflows/deploy-azure.yml](.github/workflows/deploy-azure.yml) directly or change the workflow to read from repository variables.
+
+The workflow does this in order:
+1. Logs into Azure using GitHub OIDC
+2. Creates/selects the azd environment for the runner
+3. Provisions infrastructure with `azd provision`
+4. Reads `BACKEND_URL` from azd outputs
+5. Builds the Vite frontend with `VITE_API_BASE_URL=<BACKEND_URL>/api`
+6. Deploys backend and frontend with `azd deploy`
+
+To enable Azure OIDC for GitHub Actions:
+1. Create an Azure AD app or user-assigned managed identity for deployment
+2. Add a federated credential for your GitHub repo and branch
+3. Grant it permission over the subscription or resource group used by this project
+
+After that, pushes to `main` or a manual `workflow_dispatch` run will deploy the app.
 
 ### Tear down
 ```bash

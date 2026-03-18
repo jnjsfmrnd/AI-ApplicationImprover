@@ -1,4 +1,4 @@
-@description('Azure App Service Plan — F1 free tier')
+@description('Azure App Service Plan — B1 basic tier (no shared CPU quota, always-on capable)')
 
 param name string
 param location string
@@ -9,9 +9,8 @@ resource plan 'Microsoft.Web/serverfarms@2022-09-01' = {
   location: location
   tags: tags
   sku: {
-    name: 'F1'
-    tier: 'Free'
-    capacity: 1
+    name: 'B1'
+    tier: 'Basic'
   }
   kind: 'linux'
   properties: {
