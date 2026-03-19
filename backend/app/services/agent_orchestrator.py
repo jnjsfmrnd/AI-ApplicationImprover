@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+from datetime import date
 
 from app.schemas.models import SkillProject
 from app.services.llm_provider import llm_provider
@@ -13,6 +14,20 @@ from app.services.prompt_modules.skill_projects import build_skill_project_promp
 
 
 class AgentOrchestrator:
+    def _build_adaptation_note(self, skill: str, related_experience: str) -> str:
+        clean_skill = skill.strip()
+        clean_experience = related_experience.strip().rstrip(".")
+        if not clean_skill or not clean_experience:
+            return ""
+        return (
+            f"{clean_experience}. This experience transfers directly to {clean_skill} and supports a fast ramp to production-level execution."
+        )
+
+    def _replace_cover_letter_date_placeholder(self, text: str) -> str:
+        today = date.today()
+        formatted_today = f"{today:%B} {today.day}, {today:%Y}"
+        return re.sub(r"\[date\]", formatted_today, text, flags=re.IGNORECASE)
+
     def _extract_json_object(self, text: str) -> dict:
         start = text.find("{")
         end = text.rfind("}")
@@ -87,13 +102,14 @@ class AgentOrchestrator:
         gaps: list[dict] = []
         for item in normalized[:max_gap_skills]:
             resources = MCP_TOOLS["learning.free_resources"]({"skill": item["skill"]}).get("resources", [])
-            why_text = item["why_it_matters"]
+            additional_notes = ""
             if item["related_experience"]:
-                why_text = f"{why_text} Adjacent experience: {item['related_experience']}"
+                additional_notes = self._build_adaptation_note(item["skill"], item["related_experience"])
             gaps.append(
                 {
                     "skill": item["skill"],
-                    "why_it_matters": why_text,
+                    "why_it_matters": item["why_it_matters"],
+                    "additional_notes": additional_notes,
                     "free_resources": resources,
                 }
             )
@@ -113,7 +129,10 @@ class AgentOrchestrator:
     def _format_skill_gap_context(self, summary: str, gaps: list[dict]) -> str:
         lines = [summary.strip()]
         for item in gaps:
-            lines.append(f"- {item['skill']}: {item['why_it_matters']}")
+            line = f"- {item['skill']}: {item['why_it_matters']}"
+            if isinstance(item.get("additional_notes"), str) and item["additional_notes"].strip():
+                line = f"{line} ({item['additional_notes'].strip()})"
+            lines.append(line)
         return "\n".join(line for line in lines if line).strip()
 
     def _format_project_context(self, projects: list[SkillProject]) -> str:
@@ -326,7 +345,8 @@ class AgentOrchestrator:
         company: str | None,
     ) -> str:
         system, user = build_cover_letter_prompt(resume_text, job_description, role, company)
-        return await llm_provider.generate(system, user)
+        generated = await llm_provider.generate(system, user)
+        return self._replace_cover_letter_date_placeholder(generated)
 
     async def skill_gap(
         self,
@@ -368,6 +388,8 @@ class AgentOrchestrator:
         role: str,
         industry: str | None,
         year: int | None,
+        *,
+        company: str | None = None,
         max_gap_skills: int = 3,
     ) -> dict:
         skill_gap_summary, gaps = await self.skill_gap(
@@ -389,8 +411,8 @@ class AgentOrchestrator:
         project_context = self._format_project_context(projects)
         project_resume_text = self._inject_projects_into_resume(resume_text, projects)
 
-        # Phase 3: both rewrites are independent — run concurrently
-        truthful_rewrite, project_enhanced_rewrite = await asyncio.gather(
+        # Phase 3: rewrites and cover letter are independent — run concurrently
+        truthful_rewrite, project_enhanced_rewrite, cover_letter_text = await asyncio.gather(
             self.recruiter_rewrite(
                 resume_text,
                 job_description,
@@ -408,6 +430,7 @@ class AgentOrchestrator:
                 skill_gap_context=skill_gap_context,
                 project_context=project_context,
             ),
+            self.cover_letter(resume_text, job_description, role, company),
         )
 
         # Phase 4: both ATS passes are independent — run concurrently
@@ -433,6 +456,7 @@ class AgentOrchestrator:
             "skill_gap_summary": skill_gap_summary,
             "skill_gaps": gaps,
             "skill_projects": projects,
+            "cover_letter": cover_letter_text,
             "truthful_rewrite": truthful_rewrite,
             "project_enhanced_rewrite": project_enhanced_rewrite,
             "truthful_ats": truthful_ats,

@@ -8,8 +8,6 @@ import {
   uploadResumeFile,
 } from "./services/api";
 
-type FinalVariantKey = "truthful_ats" | "project_enhanced_ats";
-
 export default function App() {
   const [resumeText, setResumeText] = useState("");
   const [jobDescription, setJobDescription] = useState("");
@@ -21,17 +19,28 @@ export default function App() {
   const [status, setStatus] = useState("Ready");
   const [modelName, setModelName] = useState("");
 
-  const [truthfulRewriteOutput, setTruthfulRewriteOutput] = useState("");
-  const [projectRewriteOutput, setProjectRewriteOutput] = useState("");
   const [truthfulAtsOutput, setTruthfulAtsOutput] = useState("");
-  const [projectAtsOutput, setProjectAtsOutput] = useState("");
+  const [coverLetterOutput, setCoverLetterOutput] = useState("");
   const [skillSummary, setSkillSummary] = useState("");
   const [skillGaps, setSkillGaps] = useState<SkillGap[]>([]);
   const [skillProjects, setSkillProjects] = useState<SkillProject[]>([]);
-  const [selectedFinalVariant, setSelectedFinalVariant] = useState<FinalVariantKey>("truthful_ats");
 
-  const finalResumeContent = selectedFinalVariant === "project_enhanced_ats" ? projectAtsOutput : truthfulAtsOutput;
-  const hasTailoredOutput = Boolean(truthfulAtsOutput || projectAtsOutput || truthfulRewriteOutput || projectRewriteOutput);
+  const hasTailoredOutput = Boolean(truthfulAtsOutput);
+
+  const getApplicantName = (resume: string): string => {
+    const firstLine = resume
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line.length > 0);
+
+    if (!firstLine) {
+      return "Applicant";
+    }
+
+    const withoutPrefix = firstLine.replace(/^name\s*:\s*/i, "").trim();
+    const cleaned = withoutPrefix.replace(/[^a-zA-Z\s.'-]/g, "").trim();
+    return cleaned || "Applicant";
+  };
 
   const statusTone = (() => {
     const normalized = status.toLowerCase();
@@ -98,13 +107,8 @@ export default function App() {
       setSkillSummary(result.skill_gap_summary);
       setSkillGaps(result.skill_gaps);
       setSkillProjects(result.skill_projects);
-      setTruthfulRewriteOutput(result.truthful_rewrite.content);
-      setProjectRewriteOutput(result.project_enhanced_rewrite.content);
+      setCoverLetterOutput(result.cover_letter);
       setTruthfulAtsOutput(result.truthful_ats.content);
-      setProjectAtsOutput(result.project_enhanced_ats.content);
-      setSelectedFinalVariant(
-        result.default_final_variant === "project_enhanced_ats" ? "project_enhanced_ats" : "truthful_ats"
-      );
       setStatus("Generation complete.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Generation failed");
@@ -162,72 +166,58 @@ export default function App() {
 
       <section className="card">
         <h2>Final ATS Resume</h2>
+        <p className="status">Truthful ATS-optimized resume based solely on your real experience.</p>
+        <textarea readOnly value={truthfulAtsOutput} rows={16} />
         <div className="actions">
           <button
-            type="button"
-            className={selectedFinalVariant === "truthful_ats" ? "button-secondary is-active" : "button-secondary"}
-            onClick={() => setSelectedFinalVariant("truthful_ats")}
             disabled={!truthfulAtsOutput}
+            onClick={() => downloadPdf(`${getApplicantName(resumeText)}_resume`, truthfulAtsOutput, "resume")}
           >
-            Truthful ATS
-          </button>
-          <button
-            type="button"
-            className={selectedFinalVariant === "project_enhanced_ats" ? "button-secondary is-active" : "button-secondary"}
-            onClick={() => setSelectedFinalVariant("project_enhanced_ats")}
-            disabled={!projectAtsOutput}
-          >
-            Project-Enhanced ATS
-          </button>
-        </div>
-        <p className="status">Primary preview is ATS-safe. Switch variants depending on how aggressive you want to be.</p>
-        <textarea readOnly value={finalResumeContent} rows={16} />
-        <div className="actions">
-          <button disabled={!finalResumeContent} onClick={() => downloadPdf("Tailored_Resume", finalResumeContent)}>
-            Download Selected PDF
+            Download PDF
           </button>
         </div>
       </section>
 
       <section className="card">
-        <h2>Recruiter Rewrite Variants</h2>
-        <label>
-          Truthful Rewrite
-          <textarea readOnly value={truthfulRewriteOutput} rows={12} />
-        </label>
-        <label>
-          Project-Enhanced Rewrite
-          <textarea readOnly value={projectRewriteOutput} rows={12} />
-        </label>
+        <h2>Cover Letter</h2>
+        {!coverLetterOutput && <p className="status">Generated alongside the pipeline — tailored to the role and company from the JD.</p>}
+        <textarea readOnly value={coverLetterOutput} rows={14} />
+        {coverLetterOutput && (
+          <div className="actions">
+            <button onClick={() => downloadPdf(`${getApplicantName(resumeText)}_coverletter`, coverLetterOutput, "cover-letter")}>
+              Download PDF
+            </button>
+          </div>
+        )}
       </section>
 
       <section className="card">
-        <h2>Skill Gap Analysis</h2>
-        <pre>{skillSummary}</pre>
+        <h2>Skill Gaps & Bridge Project</h2>
+        <p className="status">These are honest gaps — use the project below to close them for real, then add the bullets to your resume once built.</p>
+        {skillSummary && <pre>{skillSummary}</pre>}
         {skillGaps.map((item) => (
           <div key={item.skill} className="gap-item">
             <strong>{item.skill}</strong>
             <p>{item.why_it_matters}</p>
-            <ul>
-              {item.free_resources.map((resource) => (
-                <li key={resource}>{resource}</li>
-              ))}
-            </ul>
+            {item.additional_notes && <p><strong>Additional notes:</strong> {item.additional_notes}</p>}
+            {item.free_resources.length > 0 && (
+              <ul>
+                {item.free_resources.map((resource) => (
+                  <li key={resource}>{resource}</li>
+                ))}
+              </ul>
+            )}
           </div>
         ))}
-      </section>
-
-      <section className="card">
-        <h2>Gap-Covering Project Plan</h2>
-        {!skillProjects.length && <p className="status">Run the pipeline to generate one strong project that covers the most important gaps from the pasted JD.</p>}
+        {!skillProjects.length && !skillSummary && (
+          <p className="status">Run the pipeline to analyze gaps and generate a bridge project scoped for one day of work.</p>
+        )}
         {skillProjects.map((project) => (
           <div key={project.title} className="project-item">
             <h3>{project.title}</h3>
             <p>{project.one_day_scope}</p>
-            <p>
-              <strong>Skills Covered:</strong> {project.skills_covered.join(", ")}
-            </p>
-            <strong>Resume Bullets</strong>
+            <p><strong>Skills Covered:</strong> {project.skills_covered.join(", ")}</p>
+            <strong>Resume Bullets (add once built)</strong>
             <ul>
               {project.resume_bullets.map((bullet) => (
                 <li key={bullet}>{bullet}</li>

@@ -25,6 +25,7 @@ def build_rewrite_prompt(
         f"Skill Gap Context:\n{skill_gap_context or 'None provided'}\n\n"
         f"Project Context:\n{project_context or 'Do not add hypothetical projects'}\n\n"
         "Output a polished resume draft with ATS-friendly section headings and stronger achievement bullets. "
-        "Emphasize requirement match, adjacent transferable experience, and recruiter-readable phrasing."
+        "Emphasize requirement match, adjacent transferable experience, and recruiter-readable phrasing. "
+        "If a catch-all section is needed, use the heading 'ADDITIONAL INFORMATION' only."
     )
     return system, user

@@ -21,7 +21,8 @@ def build_skill_gap_prompt(resume_text: str, job_description: str, role: str) ->
         "}\n\n"
         "Rules:\n"
         "- Prioritize the 3 most important gaps for the target role.\n"
-        "- If the candidate has adjacent experience, describe it in related_experience.\n"
+        "- If the candidate has adjacent experience, describe it as transferable evidence that explains faster ramp-up for the required skill.\n"
+        "- Write related_experience in concise, resume-authored language and avoid third-person phrasing like 'the candidate'.\n"
         "- Only include skills that are requested or strongly implied by the JD.\n"
         "- Output JSON only with no markdown fences."
     )

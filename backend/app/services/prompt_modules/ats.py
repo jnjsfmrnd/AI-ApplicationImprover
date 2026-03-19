@@ -22,6 +22,8 @@ def build_ats_prompt(
         f"Resume:\n{resume_text}\n\n"
         "Return an ATS-optimized resume with standard section headings, strong JD keyword coverage, "
         "plain text readability, and no tables or decorative formatting. Rephrase existing evidence only. "
+        "Use resume-authored voice and never refer to the writer as 'the candidate'. "
+        "If you include an extra catch-all section, label it 'ADDITIONAL INFORMATION' only (never 'ADDITIONAL DETAILS' or 'ADDITIONAL NOTES'). "
         "Do not add new roles, projects, certifications, training, communities, or accomplishments that are not already present in the input resume. "
         "If evidence for a JD requirement is missing, leave the gap unfilled instead of fabricating support."
     )

@@ -145,8 +145,11 @@ def _should_skip_line(line: str) -> bool:
         return False
     if normalized.startswith("this polished resume"):
         return True
-    if normalized.startswith("this resume") and "highlights" in normalized and "impact" in normalized:
+    if normalized.startswith("this resume"):
         return True
+    if normalized.startswith("this resume highlights"):
+        return True
+    # catch separator lines followed by intro blurbs (the --- itself)
     return False
 
 
@@ -196,14 +199,27 @@ def _map_heading_column(line: str) -> str | None:
         "core skills",
         "skills",
         "technical skills",
+        "core competencies",
+        "competencies",
+        "key competencies",
+        "key skills",
         "education",
         "certifications",
         "certification",
+        "languages",
+        "tools",
     }
     left_sections = {
         "professional experience",
         "experience",
         "work experience",
+        "additional",
+        "additional information",
+        "notes",
+        "technical notes",
+        "additional notes",
+        "other",
+        "other information",
     }
 
     if normalized in right_sections:
@@ -211,6 +227,23 @@ def _map_heading_column(line: str) -> str | None:
     if normalized in left_sections:
         return "left"
     return None
+
+
+def _is_summary_heading(line: str) -> bool:
+    heading = _extract_heading_text(line)
+    if not heading:
+        return False
+    normalized = re.sub(r"\s+", " ", heading).strip().lower().replace("&", "and")
+    return normalized in {
+        "professional summary",
+        "summary",
+        "career summary",
+        "professional profile",
+        "profile",
+        "about me",
+        "objective",
+        "career objective",
+    }
 
 
 @router.post("/extract/job-context", response_model=JobContextResponse)
@@ -311,6 +344,7 @@ async def generate_tailored_resume(
                 "skill_gap_summary": pipeline_result["skill_gap_summary"],
                 "skill_gaps": [item.model_dump() for item in gap_items],
                 "skill_projects": [project.model_dump() for project in projects],
+                "cover_letter": pipeline_result["cover_letter"],
                 "truthful_rewrite": pipeline_result["truthful_rewrite"],
                 "project_enhanced_rewrite": pipeline_result["project_enhanced_rewrite"],
                 "truthful_ats": pipeline_result["truthful_ats"],
@@ -326,6 +360,7 @@ async def generate_tailored_resume(
         skill_gap_summary=pipeline_result["skill_gap_summary"],
         skill_gaps=gap_items,
         skill_projects=projects,
+        cover_letter=pipeline_result["cover_letter"],
         truthful_rewrite=ResumeVariant(
             content=pipeline_result["truthful_rewrite"],
             stage="recruiter_rewrite",
@@ -434,8 +469,11 @@ async def generate_skill_projects(
 
 
 @router.post("/export/pdf")
+@router.post("/export/pdf/resume")
 async def export_pdf(payload: ExportPdfRequest) -> StreamingResponse:
     buffer = BytesIO()
+
+    # Original resume layout for multi-column documents
     reserved_header_height = 1.12 * inch
     document = SimpleDocTemplate(
         buffer,
@@ -460,7 +498,7 @@ async def export_pdf(payload: ExportPdfRequest) -> StreamingResponse:
         parent=styles["BodyText"],
         fontName="Helvetica",
         fontSize=9.8,
-        leading=12.2,
+        leading=11.6,
         textColor=colors.HexColor("#111827"),
         spaceAfter=2,
     )
@@ -478,7 +516,7 @@ async def export_pdf(payload: ExportPdfRequest) -> StreamingResponse:
         parent=body_style,
         leftIndent=9,
         bulletIndent=2,
-        spaceAfter=1,
+        spaceAfter=0.5,
     )
     name_style = ParagraphStyle(
         "NameStyle",
@@ -488,12 +526,22 @@ async def export_pdf(payload: ExportPdfRequest) -> StreamingResponse:
         leading=22,
         spaceAfter=4,
     )
+    summary_style = ParagraphStyle(
+        "SummaryStyle",
+        parent=body_style,
+        fontSize=9.5,
+        leading=11.4,
+        spaceAfter=1.5,
+        spaceBefore=0,
+    )
 
     header_lines: list[str] = []
+    summary_lines: list[str] = []
     right_lines: list[str] = []
     left_lines: list[str] = []
     active_column = "left"
     in_header = True
+    in_summary = False
 
     for raw_line in payload.content.split("\n"):
         line = raw_line.strip()
@@ -504,15 +552,28 @@ async def export_pdf(payload: ExportPdfRequest) -> StreamingResponse:
             continue
 
         mapped_column = _map_heading_column(line)
-        if in_header and mapped_column:
+        is_summary = _is_summary_heading(line)
+
+        if in_header and (mapped_column or is_summary):
             in_header = False
 
         if in_header:
             header_lines.append(line)
             continue
 
+        if is_summary:
+            in_summary = True
+            # include the heading in summary_lines so it renders styled
+            summary_lines.append(line)
+            continue
+
         if mapped_column:
+            in_summary = False
             active_column = mapped_column
+
+        if in_summary:
+            summary_lines.append(line)
+            continue
 
         target = right_lines if active_column == "right" else left_lines
         target.append(line)
@@ -556,11 +617,40 @@ async def export_pdf(payload: ExportPdfRequest) -> StreamingResponse:
     right_flowables = _build_column_flowables(right_lines, allow_name_emphasis=False)
     left_flowables = _build_column_flowables(left_lines, allow_name_emphasis=False)
 
+    # Build summary flowables early so we can measure their height and subtract
+    # it from the column frame, keeping everything on one page.
+    def _build_summary_flowables(lines: list[str]) -> list:
+        result: list = []
+        for line in lines:
+            if not line:
+                result.append(Spacer(1, 2))
+                continue
+            hm = re.match(r"^#{1,6}\s*(.+)$", line)
+            if hm:
+                result.append(Paragraph(_markdown_inline_to_reportlab(hm.group(1).strip()), heading_style))
+                continue
+            dh = _extract_heading_text(line)
+            if dh and dh == re.sub(r"[*_#`]", "", line).strip():
+                result.append(Paragraph(_markdown_inline_to_reportlab(dh), heading_style))
+                continue
+            if line.startswith("- ") or line.startswith("* "):
+                result.append(Paragraph(_markdown_inline_to_reportlab(line[2:].strip()), bullet_style, bulletText="•"))
+                continue
+            result.append(Paragraph(_markdown_inline_to_reportlab(line), summary_style))
+        if result:
+            result.append(Spacer(1, 10))
+        return result
+
+    summary_section_flowables = _build_summary_flowables(summary_lines)
+
+    # Measure rendered summary height so column boxes don't overflow the page.
+    summary_height = sum(fl.wrap(available_width, 9999)[1] for fl in summary_section_flowables)
+
     # SimpleDocTemplate adds 6pt internal padding on each side of its body frame,
     # so the actual usable frame height is available_height - 12.  We subtract
     # an additional 8 pt buffer so the KeepInFrame's rendered height never
     # exceeds the frame and triggers a LayoutError.
-    column_max_height = max(available_height - 20, 2 * inch)
+    column_max_height = max(available_height - summary_height - 20, 2 * inch)
 
     left_column_box = KeepInFrame(
         maxWidth=left_column_width,
@@ -642,9 +732,86 @@ async def export_pdf(payload: ExportPdfRequest) -> StreamingResponse:
 
         canv.restoreState()
 
-    story: list = [columns_table]
+    # Build story with optional negative spacer to close gap between header and summary
+    story: list = []
+    if summary_section_flowables:
+        story.append(Spacer(1, -24))  # Negative spacer pulls summary closer to header
+        story.extend(summary_section_flowables)
+    story.append(columns_table)
 
     document.build(story, onFirstPage=draw_first_page_header)
+    buffer.seek(0)
+
+    file_name = _normalize_filename(payload.title)
+
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={file_name}.pdf"},
+    )
+
+
+@router.post("/export/pdf/cover-letter")
+async def export_cover_letter_pdf(payload: ExportPdfRequest) -> StreamingResponse:
+    buffer = BytesIO()
+    document = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        leftMargin=0.75 * inch,
+        rightMargin=0.75 * inch,
+        topMargin=0.62 * inch,
+        bottomMargin=0.62 * inch,
+        title=payload.title,
+    )
+
+    styles = getSampleStyleSheet()
+    body_style = ParagraphStyle(
+        "BodyStyle",
+        parent=styles["BodyText"],
+        fontName="Helvetica",
+        fontSize=11,
+        leading=14,
+        textColor=colors.HexColor("#111827"),
+        spaceAfter=6,
+    )
+    heading_style = ParagraphStyle(
+        "HeadingStyle",
+        parent=body_style,
+        fontName="Helvetica-Bold",
+        fontSize=12,
+        leading=14,
+        spaceBefore=2,
+        spaceAfter=2,
+    )
+
+    story: list = []
+    lines = [line.rstrip() for line in payload.content.split("\n")]
+
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    previous_was_blank = False
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            if not previous_was_blank:
+                story.append(Spacer(1, 3))
+            previous_was_blank = True
+            continue
+
+        previous_was_blank = False
+
+        heading_match = re.match(r"^#{1,6}\s*(.+)$", line)
+        if heading_match:
+            story.append(Paragraph(_markdown_inline_to_reportlab(heading_match.group(1).strip()), heading_style))
+        elif line.isupper() and len(line) > 3:
+            story.append(Paragraph(_markdown_inline_to_reportlab(line), heading_style))
+        else:
+            story.append(Paragraph(_markdown_inline_to_reportlab(line), body_style))
+
+    document.build(story)
     buffer.seek(0)
 
     file_name = _normalize_filename(payload.title)

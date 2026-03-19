@@ -22,6 +22,7 @@ export type JobContext = {
 export type SkillGap = {
   skill: string;
   why_it_matters: string;
+  additional_notes: string;
   free_resources: string[];
 };
 
@@ -46,6 +47,7 @@ export type TailoredResumeResponse = {
   skill_gap_summary: string;
   skill_gaps: SkillGap[];
   skill_projects: SkillProject[];
+  cover_letter: string;
   truthful_rewrite: ResumeVariant;
   project_enhanced_rewrite: ResumeVariant;
   truthful_ats: ResumeVariant;
@@ -100,7 +102,7 @@ export async function generateCoverLetter(input: GenerationInput): Promise<strin
   return data.content;
 }
 
-export async function generateSkillGap(input: GenerationInput): Promise<{ summary: string; gaps: Array<{ skill: string; why_it_matters: string; free_resources: string[] }> }> {
+export async function generateSkillGap(input: GenerationInput): Promise<{ summary: string; gaps: Array<{ skill: string; why_it_matters: string; additional_notes: string; free_resources: string[] }> }> {
   return postJson("/generate/skill-gap", input);
 }
 
@@ -112,8 +114,9 @@ export async function extractJobContext(jobDescription: string): Promise<JobCont
   return postJson<JobContext>("/extract/job-context", { job_description: jobDescription });
 }
 
-export async function downloadPdf(title: string, content: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/export/pdf`, {
+export async function downloadPdf(title: string, content: string, documentType: "resume" | "cover-letter" = "resume"): Promise<void> {
+  const endpoint = documentType === "cover-letter" ? "/export/pdf/cover-letter" : "/export/pdf/resume";
+  const res = await fetch(`${API_BASE}${endpoint}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ title, content }),

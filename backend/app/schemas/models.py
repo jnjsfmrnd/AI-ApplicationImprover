@@ -48,6 +48,7 @@ class GeneratedArtifact(BaseModel):
 class SkillGapItem(BaseModel):
     skill: str
     why_it_matters: str
+    additional_notes: str = ""
     free_resources: list[str]
 
 
@@ -83,6 +84,7 @@ class TailoredResumeResponse(BaseModel):
     skill_gap_summary: str
     skill_gaps: list[SkillGapItem]
     skill_projects: list[SkillProject]
+    cover_letter: str
     truthful_rewrite: ResumeVariant
     project_enhanced_rewrite: ResumeVariant
     truthful_ats: ResumeVariant
