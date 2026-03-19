@@ -1,19 +1,67 @@
 export type GenerationInput = {
   resume_text: string;
   job_description: string;
-  role: string;
-  industry: string;
+  role?: string;
+  industry?: string;
   company?: string;
   year?: number;
 };
 
+export type TailoredResumeInput = GenerationInput & {
+  max_gap_skills?: number;
+};
+
+export type JobContext = {
+  role: string;
+  industry?: string | null;
+  company?: string | null;
+  year?: number | null;
+  confidence: number;
+};
+
+export type SkillGap = {
+  skill: string;
+  why_it_matters: string;
+  free_resources: string[];
+};
+
+export type SkillProject = {
+  title: string;
+  one_day_scope: string;
+  skills_covered: string[];
+  tasks: string[];
+  acceptance_criteria: string[];
+  resume_bullet: string;
+  resume_bullets: string[];
+};
+
+export type ResumeVariant = {
+  content: string;
+  stage: string;
+  variant: string;
+};
+
+export type TailoredResumeResponse = {
+  context: JobContext;
+  skill_gap_summary: string;
+  skill_gaps: SkillGap[];
+  skill_projects: SkillProject[];
+  truthful_rewrite: ResumeVariant;
+  project_enhanced_rewrite: ResumeVariant;
+  truthful_ats: ResumeVariant;
+  project_enhanced_ats: ResumeVariant;
+  default_final_variant: string;
+  model: string;
+};
+
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://127.0.0.1:8000/api";
 
-async function postJson<T>(path: string, body: unknown): Promise<T> {
+async function postJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal,
   });
   if (!res.ok) {
     const detail = await res.text();
@@ -43,6 +91,10 @@ export async function generateAts(input: GenerationInput): Promise<string> {
   return data.content;
 }
 
+export async function generateTailoredResume(input: TailoredResumeInput): Promise<TailoredResumeResponse> {
+  return postJson<TailoredResumeResponse>("/generate/tailored-resume", input);
+}
+
 export async function generateCoverLetter(input: GenerationInput): Promise<string> {
   const data = await postJson<{ content: string }>("/generate/cover-letter", input);
   return data.content;
@@ -52,8 +104,12 @@ export async function generateSkillGap(input: GenerationInput): Promise<{ summar
   return postJson("/generate/skill-gap", input);
 }
 
-export async function generateSkillProjects(role: string, skills: string[]): Promise<{ projects: Array<{ title: string; one_day_scope: string; tasks: string[]; acceptance_criteria: string[]; resume_bullet: string }> }> {
+export async function generateSkillProjects(role: string, skills: string[]): Promise<{ projects: Array<{ title: string; one_day_scope: string; skills_covered: string[]; tasks: string[]; acceptance_criteria: string[]; resume_bullet: string; resume_bullets: string[] }> }> {
   return postJson("/generate/skill-projects", { role, skills });
+}
+
+export async function extractJobContext(jobDescription: string): Promise<JobContext> {
+  return postJson<JobContext>("/extract/job-context", { job_description: jobDescription });
 }
 
 export async function downloadPdf(title: string, content: string): Promise<void> {

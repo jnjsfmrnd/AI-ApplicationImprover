@@ -48,7 +48,14 @@ module appService 'modules/appservice.bicep' = {
     tags: tags
     appServicePlanId: appServicePlan.outputs.id
     githubToken: githubToken
+    llmProvider: llmProvider
     llmModel: llmModel
+    geminiApiKey: geminiApiKey
+    geminiModel: geminiModel
+    azureOpenAIEndpoint: azureOpenAIEndpoint
+    azureOpenAIApiKey: azureOpenAIApiKey
+    azureOpenAIDeployment: azureOpenAIDeployment
+    azureOpenAIApiVersion: azureOpenAIApiVersion
     allowedOrigins: 'https://${staticWebApp.outputs.defaultHostname}'
   }
 }
@@ -71,8 +78,31 @@ module staticWebApp 'modules/staticwebapp.bicep' = {
 @description('GitHub PAT with Models permission (for GitHub Models AI inference)')
 param githubToken string
 
+@description('LLM provider selection: auto, github_models, gemini, or azure_openai')
+param llmProvider string = 'auto'
+
 @description('GitHub Models model name to use, e.g. gpt-4o-mini')
 param llmModel string = 'gpt-4o-mini'
+
+@secure()
+@description('Gemini API key')
+param geminiApiKey string = ''
+
+@description('Gemini model name, e.g. gemini-2.0-flash')
+param geminiModel string = 'gemini-2.0-flash'
+
+@description('Azure OpenAI endpoint URL, e.g. https://<resource>.openai.azure.com')
+param azureOpenAIEndpoint string = ''
+
+@secure()
+@description('Azure OpenAI API key')
+param azureOpenAIApiKey string = ''
+
+@description('Azure OpenAI deployment name used for chat completions')
+param azureOpenAIDeployment string = ''
+
+@description('Azure OpenAI API version')
+param azureOpenAIApiVersion string = '2024-10-21'
 
 @description('Azure region for Static Web App (limited availability)')
 param staticWebAppLocation string = 'eastus2'

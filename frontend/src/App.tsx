@@ -1,51 +1,51 @@
-import { ChangeEvent, useMemo, useState } from "react";
+import { ChangeEvent, useState } from "react";
 import {
-  GenerationInput,
   downloadPdf,
-  generateAts,
-  generateCoverLetter,
-  generateRewrite,
-  generateSkillGap,
-  generateSkillProjects,
+  generateTailoredResume,
+  SkillGap,
+  SkillProject,
+  TailoredResumeResponse,
   uploadResumeFile,
 } from "./services/api";
 
-type SkillGap = { skill: string; why_it_matters: string; free_resources: string[] };
-type SkillProject = {
-  title: string;
-  one_day_scope: string;
-  tasks: string[];
-  acceptance_criteria: string[];
-  resume_bullet: string;
-};
+type FinalVariantKey = "truthful_ats" | "project_enhanced_ats";
 
 export default function App() {
   const [resumeText, setResumeText] = useState("");
   const [jobDescription, setJobDescription] = useState("");
-  const [role, setRole] = useState("AI Engineer");
-  const [industry, setIndustry] = useState("Technology");
-  const [company, setCompany] = useState("Target Company");
-  const [year, setYear] = useState<number>(new Date().getFullYear());
+  const [inferredRole, setInferredRole] = useState("Target Role");
+  const [inferredIndustry, setInferredIndustry] = useState<string>("");
+  const [inferredYear, setInferredYear] = useState<number | undefined>(undefined);
+  const [company, setCompany] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
   const [status, setStatus] = useState("Ready");
+  const [modelName, setModelName] = useState("");
 
-  const [rewriteOutput, setRewriteOutput] = useState("");
-  const [atsOutput, setAtsOutput] = useState("");
-  const [coverLetterOutput, setCoverLetterOutput] = useState("");
+  const [truthfulRewriteOutput, setTruthfulRewriteOutput] = useState("");
+  const [projectRewriteOutput, setProjectRewriteOutput] = useState("");
+  const [truthfulAtsOutput, setTruthfulAtsOutput] = useState("");
+  const [projectAtsOutput, setProjectAtsOutput] = useState("");
   const [skillSummary, setSkillSummary] = useState("");
   const [skillGaps, setSkillGaps] = useState<SkillGap[]>([]);
   const [skillProjects, setSkillProjects] = useState<SkillProject[]>([]);
+  const [selectedFinalVariant, setSelectedFinalVariant] = useState<FinalVariantKey>("truthful_ats");
 
-  const input: GenerationInput = useMemo(
-    () => ({
-      resume_text: resumeText,
-      job_description: jobDescription,
-      role,
-      industry,
-      company,
-      year,
-    }),
-    [resumeText, jobDescription, role, industry, company, year]
-  );
+  const finalResumeContent = selectedFinalVariant === "project_enhanced_ats" ? projectAtsOutput : truthfulAtsOutput;
+  const hasTailoredOutput = Boolean(truthfulAtsOutput || projectAtsOutput || truthfulRewriteOutput || projectRewriteOutput);
+
+  const statusTone = (() => {
+    const normalized = status.toLowerCase();
+    if (isGenerating || normalized.includes("generating") || normalized.includes("analyzing") || normalized.includes("running")) {
+      return "working";
+    }
+    if (normalized.includes("complete") || normalized.includes("uploaded")) {
+      return "success";
+    }
+    if (normalized.includes("failed") || normalized.includes("error")) {
+      return "error";
+    }
+    return "info";
+  })();
 
   async function onUpload(file: File | null) {
     if (!file) return;
@@ -61,11 +61,7 @@ export default function App() {
 
   const handleResumeChange = (e: ChangeEvent<HTMLTextAreaElement>) => setResumeText(e.target.value);
   const handleJobDescriptionChange = (e: ChangeEvent<HTMLTextAreaElement>) => setJobDescription(e.target.value);
-  const handleRoleChange = (e: ChangeEvent<HTMLInputElement>) => setRole(e.target.value);
-  const handleIndustryChange = (e: ChangeEvent<HTMLInputElement>) => setIndustry(e.target.value);
   const handleCompanyChange = (e: ChangeEvent<HTMLInputElement>) => setCompany(e.target.value);
-  const handleYearChange = (e: ChangeEvent<HTMLInputElement>) =>
-    setYear(Number(e.target.value) || new Date().getFullYear());
 
   async function runPipeline() {
     if (resumeText.length < 20 || jobDescription.length < 20) {
@@ -73,43 +69,53 @@ export default function App() {
       return;
     }
 
+    if (isGenerating) {
+      return;
+    }
+
+    setIsGenerating(true);
     try {
-      setStatus("Generating recruiter rewrite...");
-      const rewrite = await generateRewrite(input);
-      setRewriteOutput(rewrite);
+      setStatus("Running tailored resume pipeline...");
+      const typedCompany = company.trim();
+      const pipelineInput = {
+        resume_text: resumeText,
+        job_description: jobDescription,
+        role: inferredRole !== "Target Role" ? inferredRole : undefined,
+        industry: inferredIndustry || undefined,
+        company: typedCompany || undefined,
+        year: inferredYear,
+        max_gap_skills: 3,
+      };
 
-      setStatus("Optimizing for ATS...");
-      const ats = await generateAts(input);
-      setAtsOutput(ats);
-
-      setStatus("Generating cover letter...");
-      const cover = await generateCoverLetter(input);
-      setCoverLetterOutput(cover);
-
-      setStatus("Running skill gap analysis...");
-      const skillGap = await generateSkillGap(input);
-      setSkillSummary(skillGap.summary);
-      setSkillGaps(skillGap.gaps);
-
-      if (skillGap.gaps.length > 0) {
-        setStatus("Generating same-day skill projects...");
-        const projects = await generateSkillProjects(
-          role,
-          skillGap.gaps.map((item) => item.skill)
-        );
-        setSkillProjects(projects.projects);
+      const result: TailoredResumeResponse = await generateTailoredResume(pipelineInput);
+      setInferredRole(result.context.role);
+      setInferredIndustry(result.context.industry ?? "");
+      setInferredYear(result.context.year ?? undefined);
+      if (!typedCompany && result.context.company) {
+        setCompany(result.context.company);
       }
-
+      setModelName(result.model);
+      setSkillSummary(result.skill_gap_summary);
+      setSkillGaps(result.skill_gaps);
+      setSkillProjects(result.skill_projects);
+      setTruthfulRewriteOutput(result.truthful_rewrite.content);
+      setProjectRewriteOutput(result.project_enhanced_rewrite.content);
+      setTruthfulAtsOutput(result.truthful_ats.content);
+      setProjectAtsOutput(result.project_enhanced_ats.content);
+      setSelectedFinalVariant(
+        result.default_final_variant === "project_enhanced_ats" ? "project_enhanced_ats" : "truthful_ats"
+      );
       setStatus("Generation complete.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Generation failed");
+    } finally {
+      setIsGenerating(false);
     }
   }
 
   return (
     <div className="container">
-      <h1>AI Resume Tailor + Agent Skill Builder</h1>
-      <p className="status">Status: {status}</p>
+      <h1>Resume Tailor + Skill Builder</h1>
 
       <section className="card">
         <h2>Input</h2>
@@ -134,44 +140,65 @@ export default function App() {
 
         <div className="row">
           <label>
-            Role
-            <input value={role} onChange={handleRoleChange} />
-          </label>
-          <label>
-            Industry
-            <input value={industry} onChange={handleIndustryChange} />
-          </label>
-          <label>
             Company
             <input value={company} onChange={handleCompanyChange} />
           </label>
-          <label>
-            Year
-            <input type="number" value={year} onChange={handleYearChange} />
-          </label>
         </div>
 
-        <button onClick={runPipeline}>Generate Outputs</button>
+        <p className="detected-context">
+          Detected from JD: {inferredRole}
+          {inferredIndustry ? ` • ${inferredIndustry}` : ""}
+          {inferredYear ? ` • ${inferredYear}` : ""}
+          {modelName ? ` • ${modelName}` : ""}
+        </p>
+
+        <button onClick={runPipeline} disabled={isGenerating || resumeText.length < 20 || jobDescription.length < 20}>
+          {isGenerating ? "Generating..." : "Generate Tailored Resume"}
+        </button>
+        <p className={`status-pill status-${statusTone}`}>
+          {status}
+        </p>
       </section>
 
       <section className="card">
-        <h2>New Resume Preview</h2>
-        <textarea readOnly value={rewriteOutput || atsOutput} rows={14} />
+        <h2>Final ATS Resume</h2>
         <div className="actions">
-          <button disabled={!rewriteOutput && !atsOutput} onClick={() => downloadPdf("Tailored Resume", rewriteOutput || atsOutput)}>
-            Download Resume PDF
+          <button
+            type="button"
+            className={selectedFinalVariant === "truthful_ats" ? "button-secondary is-active" : "button-secondary"}
+            onClick={() => setSelectedFinalVariant("truthful_ats")}
+            disabled={!truthfulAtsOutput}
+          >
+            Truthful ATS
+          </button>
+          <button
+            type="button"
+            className={selectedFinalVariant === "project_enhanced_ats" ? "button-secondary is-active" : "button-secondary"}
+            onClick={() => setSelectedFinalVariant("project_enhanced_ats")}
+            disabled={!projectAtsOutput}
+          >
+            Project-Enhanced ATS
+          </button>
+        </div>
+        <p className="status">Primary preview is ATS-safe. Switch variants depending on how aggressive you want to be.</p>
+        <textarea readOnly value={finalResumeContent} rows={16} />
+        <div className="actions">
+          <button disabled={!finalResumeContent} onClick={() => downloadPdf("Tailored_Resume", finalResumeContent)}>
+            Download Selected PDF
           </button>
         </div>
       </section>
 
       <section className="card">
-        <h2>Cover Letter Preview</h2>
-        <textarea readOnly value={coverLetterOutput} rows={14} />
-        <div className="actions">
-          <button disabled={!coverLetterOutput} onClick={() => downloadPdf("Cover Letter", coverLetterOutput)}>
-            Download Cover Letter PDF
-          </button>
-        </div>
+        <h2>Recruiter Rewrite Variants</h2>
+        <label>
+          Truthful Rewrite
+          <textarea readOnly value={truthfulRewriteOutput} rows={12} />
+        </label>
+        <label>
+          Project-Enhanced Rewrite
+          <textarea readOnly value={projectRewriteOutput} rows={12} />
+        </label>
       </section>
 
       <section className="card">
@@ -191,17 +218,43 @@ export default function App() {
       </section>
 
       <section className="card">
-        <h2>Same-Day Skill Projects</h2>
+        <h2>Gap-Covering Project Plan</h2>
+        {!skillProjects.length && <p className="status">Run the pipeline to generate one strong project that covers the most important gaps from the pasted JD.</p>}
         {skillProjects.map((project) => (
           <div key={project.title} className="project-item">
             <h3>{project.title}</h3>
             <p>{project.one_day_scope}</p>
             <p>
-              <strong>Resume Bullet:</strong> {project.resume_bullet}
+              <strong>Skills Covered:</strong> {project.skills_covered.join(", ")}
             </p>
+            <strong>Resume Bullets</strong>
+            <ul>
+              {project.resume_bullets.map((bullet) => (
+                <li key={bullet}>{bullet}</li>
+              ))}
+            </ul>
+            <strong>Build Tasks</strong>
+            <ul>
+              {project.tasks.map((task) => (
+                <li key={task}>{task}</li>
+              ))}
+            </ul>
+            <strong>Acceptance Criteria</strong>
+            <ul>
+              {project.acceptance_criteria.map((criterion) => (
+                <li key={criterion}>{criterion}</li>
+              ))}
+            </ul>
           </div>
         ))}
       </section>
+
+      {!hasTailoredOutput && (
+        <section className="card">
+          <h2>How This Flow Works</h2>
+          <p className="status">The app analyzes the pasted JD first, finds the most important skill gaps for that target role, designs one strong project to cover as many of them as possible, then builds recruiter and ATS variants from that context.</p>
+        </section>
+      )}
     </div>
   );
 }

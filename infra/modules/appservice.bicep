@@ -8,7 +8,16 @@ param allowedOrigins string = '*'
 
 @secure()
 param githubToken string
+param llmProvider string = 'auto'
 param llmModel string = 'gpt-4o-mini'
+@secure()
+param geminiApiKey string = ''
+param geminiModel string = 'gemini-2.0-flash'
+param azureOpenAIEndpoint string = ''
+@secure()
+param azureOpenAIApiKey string = ''
+param azureOpenAIDeployment string = ''
+param azureOpenAIApiVersion string = '2024-10-21'
 
 resource appService 'Microsoft.Web/sites@2022-09-01' = {
   name: name
@@ -30,12 +39,40 @@ resource appService 'Microsoft.Web/sites@2022-09-01' = {
           value: 'true'
         }
         {
+          name: 'LLM_PROVIDER'
+          value: llmProvider
+        }
+        {
           name: 'GITHUB_TOKEN'
           value: githubToken
         }
         {
           name: 'LLM_MODEL'
           value: llmModel
+        }
+        {
+          name: 'GEMINI_API_KEY'
+          value: geminiApiKey
+        }
+        {
+          name: 'GEMINI_MODEL'
+          value: geminiModel
+        }
+        {
+          name: 'AZURE_OPENAI_ENDPOINT'
+          value: azureOpenAIEndpoint
+        }
+        {
+          name: 'AZURE_OPENAI_API_KEY'
+          value: azureOpenAIApiKey
+        }
+        {
+          name: 'AZURE_OPENAI_DEPLOYMENT'
+          value: azureOpenAIDeployment
+        }
+        {
+          name: 'AZURE_OPENAI_API_VERSION'
+          value: azureOpenAIApiVersion
         }
         {
           name: 'DATABASE_URL'

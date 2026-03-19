@@ -14,7 +14,7 @@ It includes an Agent Orchestrator + MCP-style tool adapters and supports in-app 
 - Backend: FastAPI (Python 3.12) → deployed to **Azure App Service (F1 free)**
 - Persistence: SQLite on App Service `/home` (persistent Azure Files mount)
 - PDF: reportlab
-- AI: **GitHub Models** via `azure-ai-inference` SDK (gpt-4o-mini, completely free)
+- AI: **GitHub Models** (default) with optional Gemini and Azure provider support
 - IaC: Azure Developer CLI (azd) + Bicep
 
 > **Note on App Service tier:** The project uses **B1** (Basic tier, ~$13/month). F1 Free tier was tested but its 60 CPU-min/day shared quota causes Kudu/SCM deploys to fail whenever the cap is hit, making it unreliable for portfolio demos.
@@ -23,10 +23,12 @@ It includes an Agent Orchestrator + MCP-style tool adapters and supports in-app 
 
 ## Local development
 
-### 1. Get a GitHub Models token
-1. Go to <https://github.com/settings/tokens> and create a **fine-grained PAT**.
-2. Under **Permissions → Account permissions**, enable **Models** (read).
-3. Copy the token.
+### 1. Get model credentials
+Use either of these:
+
+- **GitHub Models (recommended for now):** a fine-grained PAT with **Models (read)** from <https://github.com/settings/tokens>.
+- **Gemini (optional):** API key from Google AI Studio or Gemini API.
+- **Azure OpenAI (optional):** endpoint, deployment name, and API key from your Azure OpenAI resource.
 
 ### 2. Backend setup
 ```bash
@@ -39,8 +41,19 @@ copy .env.example .env       # then edit .env and paste your token
 
 Edit `backend/.env`:
 ```
-GITHUB_TOKEN=ghp_...         # your GitHub Models token
+LLM_PROVIDER=auto
 LLM_MODEL=gpt-4o-mini
+GITHUB_TOKEN=ghp_...
+
+# Optional Gemini path:
+# GEMINI_API_KEY=<your_gemini_api_key>
+# GEMINI_MODEL=gemini-2.0-flash
+
+# Optional Azure provider path:
+# AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com
+# AZURE_OPENAI_API_KEY=<your_azure_openai_key>
+# AZURE_OPENAI_DEPLOYMENT=gpt-4o-mini
+# AZURE_OPENAI_API_VERSION=2024-10-21
 DATABASE_URL=sqlite:///./ai_application_improver.db
 ```
 
@@ -84,11 +97,26 @@ Open <http://localhost:5173>.
    azd auth login
    ```
 
-3. **Set your GitHub token** (needed by Bicep provisioning):
+3. **Set your model credentials** (for provisioning app settings):
    ```bash
+   # GitHub Models (recommended)
    $env:GITHUB_TOKEN = "ghp_..."   # PowerShell
+
+   # Optional Gemini provider
+   $env:GEMINI_API_KEY = "<gemini-key>"
+   $env:GEMINI_MODEL = "gemini-2.0-flash"
+
+   # Optional Azure provider
+   $env:AZURE_OPENAI_ENDPOINT = "https://<resource>.openai.azure.com"
+   $env:AZURE_OPENAI_API_KEY = "<key>"
+   $env:AZURE_OPENAI_DEPLOYMENT = "gpt-4o-mini"
    # or
-   export GITHUB_TOKEN=ghp_...     # bash
+   export GITHUB_TOKEN=ghp_...
+   export GEMINI_API_KEY="<gemini-key>"
+   export GEMINI_MODEL="gemini-2.0-flash"
+   export AZURE_OPENAI_ENDPOINT="https://<resource>.openai.azure.com"
+   export AZURE_OPENAI_API_KEY="<key>"
+   export AZURE_OPENAI_DEPLOYMENT="gpt-4o-mini"
    ```
 
 4. **Provision + deploy everything:**
@@ -140,29 +168,34 @@ Add these GitHub repository secrets:
 - `AZURE_CLIENT_ID`
 - `AZURE_TENANT_ID`
 - `AZURE_SUBSCRIPTION_ID`
-- `GH_MODELS_TOKEN` - GitHub PAT with Models access for the backend inference calls
+- `GH_MODELS_TOKEN` (recommended)
+- `GEMINI_API_KEY` (optional, only if using Gemini)
 
 Add these GitHub repository variables if you want to override the defaults:
 - `AZD_ENV_NAME`
 - `AZURE_LOCATION`
 - `AZURE_SWA_LOCATION`
+- `LLM_PROVIDER`
 - `LLM_MODEL`
+- `GEMINI_MODEL`
 
 The committed workflow currently defaults to:
 - `AZD_ENV_NAME=JJAI-resumeImprover`
 - `AZURE_LOCATION=westcentralus`
 - `AZURE_SWA_LOCATION=eastus2`
+- `LLM_PROVIDER=auto`
 - `LLM_MODEL=gpt-4o-mini`
 
 If you want different values, either edit [.github/workflows/deploy-azure.yml](.github/workflows/deploy-azure.yml) directly or change the workflow to read from repository variables.
 
 The workflow does this in order:
 1. Logs into Azure using GitHub OIDC
-2. Creates/selects the azd environment for the runner
-3. Provisions infrastructure with `azd provision`
-4. Reads `BACKEND_URL` from azd outputs
-5. Builds the Vite frontend with `VITE_API_BASE_URL=<BACKEND_URL>/api`
-6. Deploys backend and frontend with `azd deploy`
+2. Verifies the Azure auth secrets and `GH_MODELS_TOKEN` are present
+3. Creates/selects the azd environment for the runner
+4. Provisions infrastructure with `azd provision`
+5. Reads `BACKEND_URL` from azd outputs
+6. Builds the Vite frontend with `VITE_API_BASE_URL=<BACKEND_URL>/api`
+7. Deploys backend and frontend with `azd deploy`
 
 To enable Azure OIDC for GitHub Actions:
 1. Create an Azure AD app or user-assigned managed identity for deployment
@@ -185,6 +218,7 @@ azd down            # deletes all Azure resources (keeps local code unchanged)
 - `POST /api/generate/cover-letter`
 - `POST /api/generate/skill-gap`
 - `POST /api/generate/skill-projects`
+- `POST /api/extract/job-context`
 - `POST /api/export/pdf`
 - `GET  /api/mcp/tools`
 - `POST /api/mcp/run`
@@ -194,5 +228,8 @@ azd down            # deletes all Azure resources (keeps local code unchanged)
 - Resume upload supports `.txt`, `.pdf`, and `.docx` text extraction.
 - Resume uploads and generated artifacts are persisted to the SQLite database (`resumes`, `generations` tables).
 - App Service F1 is shared infrastructure with no "Always On" — the first request after idle may take ~10–30 seconds (cold start). Acceptable for a portfolio demo.
-- To use a different GitHub Models model, change `LLM_MODEL` in `backend/.env` (local) or the App Service application setting (Azure). Available models: `gpt-4o-mini`, `gpt-4o`, `Phi-3.5-mini-instruct`.
-- If `GITHUB_TOKEN` is not set (or the inference call fails), the app uses mock generation output so the workflow still runs.
+- Backend generation uses GitHub Models whenever `GITHUB_TOKEN` is set.
+- Set `LLM_PROVIDER=gemini` to force Gemini when `GEMINI_API_KEY` is configured.
+- If GitHub Models is not configured, backend can fall back to Azure OpenAI when `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_API_KEY` are set.
+- GitHub Actions currently provisions the app for the GitHub Models path by passing `GH_MODELS_TOKEN` into deployment.
+- If neither credential path is configured (or external calls fail), the app uses mock generation output so the workflow still runs.

@@ -18,6 +18,7 @@ env:
   AZD_ENV_NAME: JJAI-resumeImprover
   AZURE_LOCATION: westcentralus
   AZURE_SWA_LOCATION: eastus2
+  LLM_PROVIDER: auto
   LLM_MODEL: gpt-4o-mini
 
 jobs:
@@ -43,6 +44,14 @@ jobs:
       - name: Install Azure Developer CLI
         uses: Azure/setup-azd@v2
 
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          test -n "${{ secrets.AZURE_CLIENT_ID }}" || { echo "Missing secret: AZURE_CLIENT_ID"; exit 1; }
+          test -n "${{ secrets.AZURE_TENANT_ID }}" || { echo "Missing secret: AZURE_TENANT_ID"; exit 1; }
+          test -n "${{ secrets.AZURE_SUBSCRIPTION_ID }}" || { echo "Missing secret: AZURE_SUBSCRIPTION_ID"; exit 1; }
+          test -n "${{ secrets.GH_MODELS_TOKEN }}" || { echo "Missing secret: GH_MODELS_TOKEN"; exit 1; }
+
       - name: Azure login with OIDC
         uses: azure/login@v2
         with:
@@ -57,7 +66,10 @@ jobs:
           azd env set AZURE_LOCATION "$AZURE_LOCATION"
           azd env set AZURE_SWA_LOCATION "$AZURE_SWA_LOCATION"
           azd env set AZURE_SUBSCRIPTION_ID "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+          azd env set LLM_PROVIDER "${{ vars.LLM_PROVIDER || env.LLM_PROVIDER }}"
           azd env set LLM_MODEL "$LLM_MODEL"
+          azd env set GEMINI_MODEL "${{ vars.GEMINI_MODEL }}"
+          azd env set GEMINI_API_KEY "${{ secrets.GEMINI_API_KEY }}"
 
       - name: Provision infrastructure
         shell: bash

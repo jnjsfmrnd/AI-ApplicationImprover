@@ -8,8 +8,8 @@ class ResumeUploadResponse(BaseModel):
 
 class JDRequest(BaseModel):
     job_description: str = Field(min_length=20)
-    role: str = Field(min_length=2)
-    industry: str = Field(min_length=2)
+    role: str | None = Field(default=None, min_length=2)
+    industry: str | None = Field(default=None, min_length=2)
     company: str | None = None
     year: int | None = None
 
@@ -17,10 +17,26 @@ class JDRequest(BaseModel):
 class GenerationInput(BaseModel):
     resume_text: str = Field(min_length=20)
     job_description: str = Field(min_length=20)
-    role: str = Field(min_length=2)
-    industry: str = Field(min_length=2)
+    role: str | None = Field(default=None, min_length=2)
+    industry: str | None = Field(default=None, min_length=2)
     company: str | None = None
     year: int | None = None
+
+
+class TailoredResumeRequest(GenerationInput):
+    max_gap_skills: int = Field(default=3, ge=1, le=5)
+
+
+class JobContextRequest(BaseModel):
+    job_description: str = Field(min_length=20)
+
+
+class JobContextResponse(BaseModel):
+    role: str
+    industry: str | None = None
+    company: str | None = None
+    year: int | None = None
+    confidence: float = Field(ge=0, le=1, default=0)
 
 
 class GeneratedArtifact(BaseModel):
@@ -44,13 +60,34 @@ class SkillGapResponse(BaseModel):
 class SkillProject(BaseModel):
     title: str
     one_day_scope: str
+    skills_covered: list[str]
     tasks: list[str]
     acceptance_criteria: list[str]
     resume_bullet: str
+    resume_bullets: list[str]
 
 
 class SkillProjectResponse(BaseModel):
     projects: list[SkillProject]
+    model: str
+
+
+class ResumeVariant(BaseModel):
+    content: str
+    stage: str
+    variant: str
+
+
+class TailoredResumeResponse(BaseModel):
+    context: JobContextResponse
+    skill_gap_summary: str
+    skill_gaps: list[SkillGapItem]
+    skill_projects: list[SkillProject]
+    truthful_rewrite: ResumeVariant
+    project_enhanced_rewrite: ResumeVariant
+    truthful_ats: ResumeVariant
+    project_enhanced_ats: ResumeVariant
+    default_final_variant: str
     model: str
 
 
