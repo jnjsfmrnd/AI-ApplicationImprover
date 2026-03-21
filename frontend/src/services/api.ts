@@ -10,6 +10,7 @@ export type GenerationInput = {
 
 export type TailoredResumeInput = GenerationInput & {
   max_gap_skills?: number;
+  include_cover_letter?: boolean;
 };
 
 export type JobContext = {

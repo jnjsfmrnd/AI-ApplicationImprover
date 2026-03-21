@@ -26,6 +26,7 @@ class GenerationInput(BaseModel):
 
 class TailoredResumeRequest(GenerationInput):
     max_gap_skills: int = Field(default=3, ge=1, le=5)
+    include_cover_letter: bool = False
 
 
 class JobContextRequest(BaseModel):

@@ -366,6 +366,7 @@ async def generate_tailored_resume(
             context.year,
             company=context.company,
             max_gap_skills=payload.max_gap_skills,
+            include_cover_letter=payload.include_cover_letter,
         )
     used_model = payload.model.strip() if isinstance(payload.model, str) and payload.model.strip() else llm_provider.model_name
 

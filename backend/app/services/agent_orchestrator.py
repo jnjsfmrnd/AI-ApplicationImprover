@@ -392,6 +392,7 @@ class AgentOrchestrator:
         *,
         company: str | None = None,
         max_gap_skills: int = 3,
+        include_cover_letter: bool = False,
     ) -> dict:
         skill_gap_summary, gaps = await self.skill_gap(
             resume_text,
@@ -412,27 +413,49 @@ class AgentOrchestrator:
         project_context = self._format_project_context(projects)
         project_resume_text = self._inject_projects_into_resume(resume_text, projects)
 
-        # Phase 3: rewrites and cover letter are independent — run concurrently
-        truthful_rewrite, project_enhanced_rewrite, cover_letter_text = await asyncio.gather(
-            self.recruiter_rewrite(
-                resume_text,
-                job_description,
-                role,
-                industry,
-                mode="truthful",
-                skill_gap_context=skill_gap_context,
-            ),
-            self.recruiter_rewrite(
-                project_resume_text,
-                job_description,
-                role,
-                industry,
-                mode="project_enhanced",
-                skill_gap_context=skill_gap_context,
-                project_context=project_context,
-            ),
-            self.cover_letter(resume_text, job_description, role, company),
-        )
+        # Phase 3: rewrites are required; cover letter is optional
+        if include_cover_letter:
+            truthful_rewrite, project_enhanced_rewrite, cover_letter_text = await asyncio.gather(
+                self.recruiter_rewrite(
+                    resume_text,
+                    job_description,
+                    role,
+                    industry,
+                    mode="truthful",
+                    skill_gap_context=skill_gap_context,
+                ),
+                self.recruiter_rewrite(
+                    project_resume_text,
+                    job_description,
+                    role,
+                    industry,
+                    mode="project_enhanced",
+                    skill_gap_context=skill_gap_context,
+                    project_context=project_context,
+                ),
+                self.cover_letter(resume_text, job_description, role, company),
+            )
+        else:
+            truthful_rewrite, project_enhanced_rewrite = await asyncio.gather(
+                self.recruiter_rewrite(
+                    resume_text,
+                    job_description,
+                    role,
+                    industry,
+                    mode="truthful",
+                    skill_gap_context=skill_gap_context,
+                ),
+                self.recruiter_rewrite(
+                    project_resume_text,
+                    job_description,
+                    role,
+                    industry,
+                    mode="project_enhanced",
+                    skill_gap_context=skill_gap_context,
+                    project_context=project_context,
+                ),
+            )
+            cover_letter_text = ""
 
         # Phase 4: both ATS passes are independent — run concurrently
         truthful_ats_raw, project_enhanced_ats = await asyncio.gather(
