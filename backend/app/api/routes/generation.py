@@ -56,7 +56,30 @@ def _extract_json_object(text: str) -> dict:
         return {}
 
 
+_COMPANY_NOISE = {"unknown", "n/a", "not specified", "not mentioned", "not provided", "not available", "confidential", "none"}
+
+
+def _regex_extract_company(job_description: str) -> str | None:
+    """Best-effort regex extraction of company name before hitting the LLM."""
+    patterns = [
+        r"(?:^|\n)\s*(?:about|overview)\s+([A-Z][\w&.,!\- ]{1,50})(?:\s*[:\n])",
+        r"(?:^|\n)\s*company\s*:\s*([A-Z][\w&.,!\- ]{1,50})",
+        r"(?:join|at|with)\s+([A-Z][\w&.]+(?:\s+[A-Z][\w&.]+){0,3})(?:\s*,|\s+we\b|\s+is\b|\s+are\b|\s+team)",
+        r"([A-Z][\w&.]+(?:\s+[A-Z][\w&.]+){0,3})\s+is\s+(?:looking|hiring|seeking|searching)",
+        r"([A-Z][\w&.]+(?:\s+[A-Z][\w&.]+){0,3})\s+(?:is|are)\s+a(?:n?)?\s+(?:fast|leading|global|top|growing)",
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, job_description, re.IGNORECASE | re.MULTILINE)
+        if m:
+            candidate = m.group(1).strip().rstrip(",.:;")
+            if candidate.lower() not in _COMPANY_NOISE and len(candidate) >= 2:
+                return candidate
+    return None
+
+
 async def _infer_job_context(job_description: str) -> JobContextResponse:
+    regex_company = _regex_extract_company(job_description)
+
     system_prompt = (
         "Extract hiring metadata from a job description. Return strict JSON with keys "
         "role, industry, company, year, confidence. Confidence must be 0 to 1."
@@ -67,16 +90,23 @@ async def _infer_job_context(job_description: str) -> JobContextResponse:
         "Rules:\n"
         "- role should be the best-fit target position title.\n"
         "- industry should be a concise sector label.\n"
-        "- company should be null if unknown.\n"
+        "- company: look carefully for a company or organisation name in the text (e.g. in 'About X', 'Join X', 'X is hiring', 'at X'). "
+        "Set to null only if no organisation name is present at all.\n"
         "- year should be null unless a specific hiring year is clearly stated.\n"
-        "- output JSON only."
+        "- output JSON only, no markdown."
     )
     output = await llm_provider.generate(system_prompt, user_prompt)
     parsed = _extract_json_object(output)
 
     role = parsed.get("role") if isinstance(parsed.get("role"), str) else ""
     industry = parsed.get("industry") if isinstance(parsed.get("industry"), str) else None
-    company = parsed.get("company") if isinstance(parsed.get("company"), str) else None
+    llm_company_raw = parsed.get("company")
+    llm_company = (
+        llm_company_raw.strip()
+        if isinstance(llm_company_raw, str) and llm_company_raw.strip().lower() not in _COMPANY_NOISE
+        else None
+    )
+    company = llm_company or regex_company
     year = _coerce_year(parsed.get("year"))
 
     confidence_raw = parsed.get("confidence")
@@ -323,6 +353,7 @@ async def generate_tailored_resume(
         context.role,
         context.industry,
         context.year,
+        company=context.company,
         max_gap_skills=payload.max_gap_skills,
     )
 

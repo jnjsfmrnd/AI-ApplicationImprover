@@ -9,9 +9,9 @@ def build_rewrite_prompt(
     project_context: str | None = None,
 ) -> tuple[str, str]:
     mode_instructions = (
-        "Stay strictly truthful to the candidate's provided experience. Do not invent completed work."
+        "Stay strictly truthful to the candidate's provided experience. Do not invent completed work. Preserve existing personal or portfolio projects whenever space permits, prioritizing them over lower-impact filler lines if trimming is needed."
         if mode == "truthful"
-        else "Use the supplied project context as optional additional resume material while keeping all other claims grounded and recruiter-friendly."
+        else "Use the supplied project context as optional additional resume material while keeping all other claims grounded and recruiter-friendly. Include personal or portfolio projects whenever space permits and trim less relevant or lower-impact content first if needed to fit length."
     )
     system = (
         "You are a top recruiter. Rewrite resumes with quantified impact, clear achievements, "
@@ -26,6 +26,7 @@ def build_rewrite_prompt(
         f"Project Context:\n{project_context or 'Do not add hypothetical projects'}\n\n"
         "Output a polished resume draft with ATS-friendly section headings and stronger achievement bullets. "
         "Emphasize requirement match, adjacent transferable experience, and recruiter-readable phrasing. "
+        "Try to keep personal or portfolio projects in the document when there is room, especially if they map to the JD's required skills. "
         "If a catch-all section is needed, use the heading 'ADDITIONAL INFORMATION' only."
     )
     return system, user

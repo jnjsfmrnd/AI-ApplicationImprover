@@ -1,4 +1,4 @@
-import { ChangeEvent, useState } from "react";
+import { ChangeEvent, useEffect, useRef, useState } from "react";
 import {
   downloadPdf,
   generateTailoredResume,
@@ -24,6 +24,30 @@ export default function App() {
   const [skillSummary, setSkillSummary] = useState("");
   const [skillGaps, setSkillGaps] = useState<SkillGap[]>([]);
   const [skillProjects, setSkillProjects] = useState<SkillProject[]>([]);
+
+  const [progress, setProgress] = useState(-1);
+  const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (isGenerating) {
+      setProgress(0);
+      const TICK_MS = 150;
+      const increment = 95 / (65000 / TICK_MS);
+      progressTimerRef.current = setInterval(() => {
+        setProgress((p) => Math.min(p + increment, 95));
+      }, TICK_MS);
+      return () => {
+        if (progressTimerRef.current !== null) {
+          clearInterval(progressTimerRef.current);
+          progressTimerRef.current = null;
+        }
+      };
+    } else {
+      setProgress((p) => (p >= 0 ? 100 : p));
+      const t = setTimeout(() => setProgress(-1), 900);
+      return () => clearTimeout(t);
+    }
+  }, [isGenerating]);
 
   const hasTailoredOutput = Boolean(truthfulAtsOutput);
 
@@ -162,12 +186,20 @@ export default function App() {
         <p className={`status-pill status-${statusTone}`}>
           {status}
         </p>
+        {progress >= 0 && (
+          <div className="progress-bar-wrap">
+            <div
+              className="progress-bar-fill"
+              style={{ width: `${Math.round(progress)}%` }}
+            />
+          </div>
+        )}
       </section>
 
       <section className="card">
         <h2>Final ATS Resume</h2>
-        <p className="status">Truthful ATS-optimized resume based solely on your real experience.</p>
-        <textarea readOnly value={truthfulAtsOutput} rows={16} />
+        <p className="status">Truthful ATS-optimized resume — edit freely before downloading.</p>
+        <textarea value={truthfulAtsOutput} onChange={(e) => setTruthfulAtsOutput(e.target.value)} rows={16} />
         <div className="actions">
           <button
             disabled={!truthfulAtsOutput}
@@ -181,7 +213,7 @@ export default function App() {
       <section className="card">
         <h2>Cover Letter</h2>
         {!coverLetterOutput && <p className="status">Generated alongside the pipeline — tailored to the role and company from the JD.</p>}
-        <textarea readOnly value={coverLetterOutput} rows={14} />
+        <textarea value={coverLetterOutput} onChange={(e) => setCoverLetterOutput(e.target.value)} rows={14} />
         {coverLetterOutput && (
           <div className="actions">
             <button onClick={() => downloadPdf(`${getApplicantName(resumeText)}_coverletter`, coverLetterOutput, "cover-letter")}>
