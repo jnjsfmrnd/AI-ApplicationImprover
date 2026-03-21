@@ -5,6 +5,7 @@ export type GenerationInput = {
   industry?: string;
   company?: string;
   year?: number;
+  model?: string;
 };
 
 export type TailoredResumeInput = GenerationInput & {

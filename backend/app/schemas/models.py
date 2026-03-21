@@ -21,6 +21,7 @@ class GenerationInput(BaseModel):
     industry: str | None = Field(default=None, min_length=2)
     company: str | None = None
     year: int | None = None
+    model: str | None = Field(default=None, min_length=2)
 
 
 class TailoredResumeRequest(GenerationInput):

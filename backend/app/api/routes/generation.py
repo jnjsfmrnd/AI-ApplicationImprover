@@ -132,7 +132,7 @@ async def _resolve_generation_context(payload: GenerationInput) -> JobContextRes
     has_year = payload.year is not None
 
     inferred = JobContextResponse(role=DEFAULT_ROLE)
-    if not has_role or (not has_industry and not has_company and not has_year):
+    if not has_role or not has_company or (not has_industry and not has_year):
         inferred = await _infer_job_context(payload.job_description)
 
     return JobContextResponse(
@@ -151,6 +151,12 @@ def _normalize_filename(value: str) -> str:
 
 def _markdown_inline_to_reportlab(line: str) -> str:
     line = re.sub(r"(?<=\d)[–—−](?=\d)", "-", line)
+    line = re.sub(
+        r"^\s*(languages\s*(?:&|and)\s*frameworks)\s*:\s*",
+        lambda match: f"**{match.group(1).strip()}:** ",
+        line,
+        flags=re.IGNORECASE,
+    )
     formatted = escape(line)
     formatted = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", formatted)
     formatted = re.sub(r"__(.+?)__", r"<b>\1</b>", formatted)
@@ -287,16 +293,18 @@ async def generate_rewrite(
     db: Session = Depends(get_db),
 ) -> GeneratedArtifact:
     context = await _resolve_generation_context(payload)
-    content = await orchestrator.recruiter_rewrite(
-        payload.resume_text,
-        payload.job_description,
-        context.role,
-        context.industry,
-    )
+    with llm_provider.use_model(payload.model):
+        content = await orchestrator.recruiter_rewrite(
+            payload.resume_text,
+            payload.job_description,
+            context.role,
+            context.industry,
+        )
+    used_model = payload.model.strip() if isinstance(payload.model, str) and payload.model.strip() else llm_provider.model_name
     db.add(
         GenerationRecord(
             mode="rewrite",
-            model=llm_provider.model_name,
+            model=used_model,
             role=context.role,
             industry=context.industry,
             company=context.company,
@@ -308,7 +316,7 @@ async def generate_rewrite(
         )
     )
     db.commit()
-    return GeneratedArtifact(content=content, model=llm_provider.model_name, mode="rewrite")
+    return GeneratedArtifact(content=content, model=used_model, mode="rewrite")
 
 
 @router.post("/generate/ats", response_model=GeneratedArtifact)
@@ -317,16 +325,18 @@ async def generate_ats(
     db: Session = Depends(get_db),
 ) -> GeneratedArtifact:
     context = await _resolve_generation_context(payload)
-    content = await orchestrator.ats_optimize(
-        payload.resume_text,
-        payload.job_description,
-        context.role,
-        context.year,
-    )
+    with llm_provider.use_model(payload.model):
+        content = await orchestrator.ats_optimize(
+            payload.resume_text,
+            payload.job_description,
+            context.role,
+            context.year,
+        )
+    used_model = payload.model.strip() if isinstance(payload.model, str) and payload.model.strip() else llm_provider.model_name
     db.add(
         GenerationRecord(
             mode="ats",
-            model=llm_provider.model_name,
+            model=used_model,
             role=context.role,
             industry=context.industry,
             company=context.company,
@@ -338,7 +348,7 @@ async def generate_ats(
         )
     )
     db.commit()
-    return GeneratedArtifact(content=content, model=llm_provider.model_name, mode="ats")
+    return GeneratedArtifact(content=content, model=used_model, mode="ats")
 
 
 @router.post("/generate/tailored-resume", response_model=TailoredResumeResponse)
@@ -347,15 +357,17 @@ async def generate_tailored_resume(
     db: Session = Depends(get_db),
 ) -> TailoredResumeResponse:
     context = await _resolve_generation_context(payload)
-    pipeline_result = await orchestrator.generate_tailored_resume_pipeline(
-        payload.resume_text,
-        payload.job_description,
-        context.role,
-        context.industry,
-        context.year,
-        company=context.company,
-        max_gap_skills=payload.max_gap_skills,
-    )
+    with llm_provider.use_model(payload.model):
+        pipeline_result = await orchestrator.generate_tailored_resume_pipeline(
+            payload.resume_text,
+            payload.job_description,
+            context.role,
+            context.industry,
+            context.year,
+            company=context.company,
+            max_gap_skills=payload.max_gap_skills,
+        )
+    used_model = payload.model.strip() if isinstance(payload.model, str) and payload.model.strip() else llm_provider.model_name
 
     gap_items = [SkillGapItem(**item) for item in pipeline_result["skill_gaps"]]
     projects = pipeline_result["skill_projects"]
@@ -363,7 +375,7 @@ async def generate_tailored_resume(
     db.add(
         GenerationRecord(
             mode="tailored_resume",
-            model=llm_provider.model_name,
+            model=used_model,
             role=context.role,
             industry=context.industry,
             company=context.company,
@@ -413,7 +425,7 @@ async def generate_tailored_resume(
             variant="project_enhanced",
         ),
         default_final_variant=pipeline_result["default_final_variant"],
-        model=llm_provider.model_name,
+        model=used_model,
     )
 
 
@@ -423,16 +435,18 @@ async def generate_cover_letter(
     db: Session = Depends(get_db),
 ) -> GeneratedArtifact:
     context = await _resolve_generation_context(payload)
-    content = await orchestrator.cover_letter(
-        payload.resume_text,
-        payload.job_description,
-        context.role,
-        context.company,
-    )
+    with llm_provider.use_model(payload.model):
+        content = await orchestrator.cover_letter(
+            payload.resume_text,
+            payload.job_description,
+            context.role,
+            context.company,
+        )
+    used_model = payload.model.strip() if isinstance(payload.model, str) and payload.model.strip() else llm_provider.model_name
     db.add(
         GenerationRecord(
             mode="cover_letter",
-            model=llm_provider.model_name,
+            model=used_model,
             role=context.role,
             industry=context.industry,
             company=context.company,
@@ -444,7 +458,7 @@ async def generate_cover_letter(
         )
     )
     db.commit()
-    return GeneratedArtifact(content=content, model=llm_provider.model_name, mode="cover_letter")
+    return GeneratedArtifact(content=content, model=used_model, mode="cover_letter")
 
 
 @router.post("/generate/skill-gap", response_model=SkillGapResponse)
@@ -453,12 +467,14 @@ async def generate_skill_gap(
     db: Session = Depends(get_db),
 ) -> SkillGapResponse:
     context = await _resolve_generation_context(payload)
-    summary, gaps = await orchestrator.skill_gap(payload.resume_text, payload.job_description, context.role)
+    with llm_provider.use_model(payload.model):
+        summary, gaps = await orchestrator.skill_gap(payload.resume_text, payload.job_description, context.role)
+    used_model = payload.model.strip() if isinstance(payload.model, str) and payload.model.strip() else llm_provider.model_name
     gap_items = [SkillGapItem(**item) for item in gaps]
     db.add(
         GenerationRecord(
             mode="skill_gap",
-            model=llm_provider.model_name,
+            model=used_model,
             role=context.role,
             industry=context.industry,
             company=context.company,
@@ -470,7 +486,7 @@ async def generate_skill_gap(
         )
     )
     db.commit()
-    return SkillGapResponse(summary=summary, gaps=gap_items, model=llm_provider.model_name)
+    return SkillGapResponse(summary=summary, gaps=gap_items, model=used_model)
 
 
 @router.post("/generate/skill-projects", response_model=SkillProjectResponse)

@@ -101,7 +101,8 @@ class AgentOrchestrator:
 
         gaps: list[dict] = []
         for item in normalized[:max_gap_skills]:
-            resources = MCP_TOOLS["learning.free_resources"]({"skill": item["skill"]}).get("resources", [])
+            resources_payload = MCP_TOOLS["learning.free_resources"]({"skill": item["skill"]})
+            resources = [] if resources_payload.get("is_fallback") else resources_payload.get("resources", [])
             additional_notes = ""
             if item["related_experience"]:
                 additional_notes = self._build_adaptation_note(item["skill"], item["related_experience"])

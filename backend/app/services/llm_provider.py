@@ -1,12 +1,13 @@
 import os
 import asyncio
 import httpx
-from collections.abc import Iterable
-
-from azure.core.exceptions import HttpResponseError
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 
 class LLMProvider:
+    _model_override: ContextVar[str | None] = ContextVar("llm_model_override", default=None)
+
     @property
     def provider(self) -> str:
         return os.getenv("LLM_PROVIDER", "auto").strip().lower()
@@ -44,37 +45,13 @@ class LLMProvider:
         return os.getenv("LLM_MODEL", "gpt-4o-mini")
 
     @property
+    def effective_model_name(self) -> str:
+        override = self._model_override.get()
+        return override.strip() if isinstance(override, str) and override.strip() else self.model_name
+
+    @property
     def endpoint(self) -> str:
         return os.getenv("AZURE_INFERENCE_ENDPOINT", "https://models.inference.ai.azure.com")
-
-    @property
-    def github_model_candidates(self) -> list[str]:
-        raw_candidates = os.getenv("GITHUB_MODEL_CANDIDATES", "")
-        parsed_candidates = [part.strip() for part in raw_candidates.split(",") if part.strip()]
-        baseline = [self.model_name, "gpt-4.1-mini", "gpt-4o-mini"]
-        merged: list[str] = []
-        seen: set[str] = set()
-        for candidate in [*parsed_candidates, *baseline]:
-            normalized = candidate.lower()
-            if normalized in seen:
-                continue
-            seen.add(normalized)
-            merged.append(candidate)
-        return merged
-
-    @property
-    def github_model_retry_statuses(self) -> set[int]:
-        raw_statuses = os.getenv("GITHUB_MODEL_RETRY_STATUSES", "408,409,425,429,500,502,503,504")
-        statuses: set[int] = set()
-        for part in raw_statuses.split(","):
-            cleaned = part.strip()
-            if not cleaned:
-                continue
-            try:
-                statuses.add(int(cleaned))
-            except ValueError:
-                continue
-        return statuses or {408, 409, 425, 429, 500, 502, 503, 504}
 
     @property
     def has_azure_openai(self) -> bool:
@@ -84,22 +61,13 @@ class LLMProvider:
     def has_gemini(self) -> bool:
         return bool(self.gemini_api_key)
 
-    def _is_retryable_github_error(self, exc: Exception) -> bool:
-        if isinstance(exc, HttpResponseError) and getattr(exc, "status_code", None) in self.github_model_retry_statuses:
-            return True
-
-        status_code = getattr(exc, "status_code", None)
-        if isinstance(status_code, int) and status_code in self.github_model_retry_statuses:
-            return True
-
-        response = getattr(exc, "response", None)
-        response_status = getattr(response, "status_code", None)
-        if isinstance(response_status, int) and response_status in self.github_model_retry_statuses:
-            return True
-
-        message = str(exc).lower()
-        retry_markers = ["rate limit", "too many requests", "throttl", "temporar", "timeout", "unavailable"]
-        return any(marker in message for marker in retry_markers)
+    @contextmanager
+    def use_model(self, model_name: str | None):
+        token = self._model_override.set(model_name.strip() if isinstance(model_name, str) else None)
+        try:
+            yield
+        finally:
+            self._model_override.reset(token)
 
     def _mock_output(self, provider_name: str, reason: str, system_prompt: str, user_prompt: str) -> str:
         return (
@@ -109,26 +77,6 @@ class LLMProvider:
             f"Generated Draft Based On Input:\n{user_prompt[:1400]}"
         )
 
-    def _coerce_content_to_text(self, content: str | Iterable | None) -> str:
-        if isinstance(content, str):
-            return content
-        if content is None:
-            return ""
-
-        chunks: list[str] = []
-        for item in content:
-            if isinstance(item, str):
-                chunks.append(item)
-                continue
-            text = getattr(item, "text", None)
-            if isinstance(text, str):
-                chunks.append(text)
-                continue
-            maybe_text = item.get("text") if isinstance(item, dict) else None
-            if isinstance(maybe_text, str):
-                chunks.append(maybe_text)
-
-        return "\n".join(part for part in chunks if part).strip()
 
     async def _generate_with_azure_openai(self, system_prompt: str, user_prompt: str) -> str:
         from openai import AzureOpenAI
@@ -185,7 +133,7 @@ class LLMProvider:
         text_parts = [part.get("text", "") for part in parts if isinstance(part, dict)]
         return "\n".join(part for part in text_parts if part).strip()
 
-    async def _generate_with_sync_client(self, model_name: str, system_prompt: str, user_prompt: str) -> str:
+    async def _generate_with_sync_client(self, system_prompt: str, user_prompt: str) -> str:
         from azure.ai.inference import ChatCompletionsClient
         from azure.ai.inference.models import SystemMessage, UserMessage
         from azure.core.credentials import AzureKeyCredential
@@ -198,7 +146,7 @@ class LLMProvider:
                 read_timeout=60,
             ) as client:
                 response = client.complete(
-                    model=model_name,
+                    model=self.effective_model_name,
                     messages=[
                         SystemMessage(content=system_prompt),
                         UserMessage(content=user_prompt),
@@ -212,57 +160,43 @@ class LLMProvider:
         except TimeoutError as exc:
             raise TimeoutError("GitHub Models sync fallback timed out after 75 seconds") from exc
 
-    async def _generate_with_github_models(self, model_name: str, system_prompt: str, user_prompt: str) -> str:
-        try:
-            from azure.ai.inference.aio import ChatCompletionsClient
-            from azure.ai.inference.models import SystemMessage, UserMessage
-            from azure.core.credentials import AzureKeyCredential
-
-            async with ChatCompletionsClient(
-                endpoint=self.endpoint,
-                credential=AzureKeyCredential(self.github_token),
-                connection_timeout=10,
-                read_timeout=60,
-            ) as client:
-                try:
-                    response = await asyncio.wait_for(
-                        client.complete(
-                            model=model_name,
-                            messages=[
-                                SystemMessage(content=system_prompt),
-                                UserMessage(content=user_prompt),
-                            ],
-                            temperature=0.7,
-                        ),
-                        timeout=65.0,
-                    )
-                except TimeoutError as exc:
-                    raise TimeoutError("GitHub Models request timed out after 65 seconds") from exc
-            return self._coerce_content_to_text(response.choices[0].message.content)
-        except ModuleNotFoundError as exc:
-            if exc.name == "aiohttp":
-                return await self._generate_with_sync_client(model_name, system_prompt, user_prompt)
-            raise
-
-    async def _generate_with_github_model_routing(self, system_prompt: str, user_prompt: str) -> str:
-        ordered_models = self.github_model_candidates
-        errors: list[str] = []
-
-        for index, candidate_model in enumerate(ordered_models):
-            try:
-                return await self._generate_with_github_models(candidate_model, system_prompt, user_prompt)
-            except Exception as exc:
-                errors.append(f"{candidate_model}: {str(exc)[:220]}")
-                is_last_model = index == len(ordered_models) - 1
-                if not self._is_retryable_github_error(exc) or is_last_model:
-                    break
-
-        joined_errors = " | ".join(errors) if errors else "unknown routing error"
-        return self._mock_output("GitHub Models", joined_errors, system_prompt, user_prompt)
-
     async def generate(self, system_prompt: str, user_prompt: str) -> str:
         if self.provider in {"github_models", "github", "auto"} and self.github_token:
-            return await self._generate_with_github_model_routing(system_prompt, user_prompt)
+            try:
+                from azure.ai.inference.aio import ChatCompletionsClient
+                from azure.ai.inference.models import SystemMessage, UserMessage
+                from azure.core.credentials import AzureKeyCredential
+
+                async with ChatCompletionsClient(
+                    endpoint=self.endpoint,
+                    credential=AzureKeyCredential(self.github_token),
+                    connection_timeout=10,
+                    read_timeout=60,
+                ) as client:
+                    try:
+                        response = await asyncio.wait_for(
+                            client.complete(
+                                model=self.effective_model_name,
+                                messages=[
+                                    SystemMessage(content=system_prompt),
+                                    UserMessage(content=user_prompt),
+                                ],
+                                temperature=0.7,
+                            ),
+                            timeout=65.0,
+                        )
+                    except TimeoutError as exc:
+                        raise TimeoutError("GitHub Models request timed out after 65 seconds") from exc
+                return response.choices[0].message.content or ""
+            except ModuleNotFoundError as exc:
+                if exc.name == "aiohttp":
+                    try:
+                        return await self._generate_with_sync_client(system_prompt, user_prompt)
+                    except Exception as sync_exc:
+                        return self._mock_output("GitHub Models", str(sync_exc), system_prompt, user_prompt)
+                return self._mock_output("GitHub Models", str(exc), system_prompt, user_prompt)
+            except Exception as exc:
+                return self._mock_output("GitHub Models", str(exc), system_prompt, user_prompt)
 
         if self.provider in {"gemini", "auto"} and self.has_gemini:
             try:

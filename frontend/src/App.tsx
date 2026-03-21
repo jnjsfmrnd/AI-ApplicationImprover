@@ -8,13 +8,15 @@ import {
   uploadResumeFile,
 } from "./services/api";
 
+const MODEL_OPTIONS = ["gpt-4.1-mini", "gpt-4o-mini", "gpt-4.1", "gpt-4o"];
+
 export default function App() {
   const [resumeText, setResumeText] = useState("");
   const [jobDescription, setJobDescription] = useState("");
   const [inferredRole, setInferredRole] = useState("Target Role");
   const [inferredIndustry, setInferredIndustry] = useState<string>("");
   const [inferredYear, setInferredYear] = useState<number | undefined>(undefined);
-  const [company, setCompany] = useState("");
+  const [selectedModel, setSelectedModel] = useState("gpt-4.1-mini");
   const [isGenerating, setIsGenerating] = useState(false);
   const [status, setStatus] = useState("Ready");
   const [modelName, setModelName] = useState("");
@@ -94,7 +96,7 @@ export default function App() {
 
   const handleResumeChange = (e: ChangeEvent<HTMLTextAreaElement>) => setResumeText(e.target.value);
   const handleJobDescriptionChange = (e: ChangeEvent<HTMLTextAreaElement>) => setJobDescription(e.target.value);
-  const handleCompanyChange = (e: ChangeEvent<HTMLInputElement>) => setCompany(e.target.value);
+  const handleModelChange = (e: ChangeEvent<HTMLSelectElement>) => setSelectedModel(e.target.value);
 
   async function runPipeline() {
     if (resumeText.length < 20 || jobDescription.length < 20) {
@@ -109,14 +111,13 @@ export default function App() {
     setIsGenerating(true);
     try {
       setStatus("Running tailored resume pipeline...");
-      const typedCompany = company.trim();
       const pipelineInput = {
         resume_text: resumeText,
         job_description: jobDescription,
         role: inferredRole !== "Target Role" ? inferredRole : undefined,
         industry: inferredIndustry || undefined,
-        company: typedCompany || undefined,
         year: inferredYear,
+        model: selectedModel,
         max_gap_skills: 3,
       };
 
@@ -124,9 +125,6 @@ export default function App() {
       setInferredRole(result.context.role);
       setInferredIndustry(result.context.industry ?? "");
       setInferredYear(result.context.year ?? undefined);
-      if (!typedCompany && result.context.company) {
-        setCompany(result.context.company);
-      }
       setModelName(result.model);
       setSkillSummary(result.skill_gap_summary);
       setSkillGaps(result.skill_gaps);
@@ -168,8 +166,14 @@ export default function App() {
 
         <div className="row">
           <label>
-            Company
-            <input value={company} onChange={handleCompanyChange} />
+            Model
+            <select value={selectedModel} onChange={handleModelChange}>
+              {MODEL_OPTIONS.map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </select>
           </label>
         </div>
 

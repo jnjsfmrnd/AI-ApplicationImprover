@@ -43,8 +43,6 @@ Edit `backend/.env`:
 ```
 LLM_PROVIDER=auto
 LLM_MODEL=gpt-4o-mini
-GITHUB_MODEL_CANDIDATES=gpt-4.1-mini,gpt-4o-mini
-GITHUB_MODEL_RETRY_STATUSES=408,409,425,429,500,502,503,504
 GITHUB_TOKEN=ghp_...
 
 # Optional Gemini path:
@@ -58,8 +56,6 @@ GITHUB_TOKEN=ghp_...
 # AZURE_OPENAI_API_VERSION=2024-10-21
 DATABASE_URL=sqlite:///./ai_application_improver.db
 ```
-
-`GITHUB_MODEL_CANDIDATES` controls model routing order for GitHub Models. The backend will try each model in order when requests hit retryable errors (for example `429` rate limit or transient `5xx`), which helps maximize quality while staying within free-tier limits.
 
 ```bash
 python -m alembic upgrade head
