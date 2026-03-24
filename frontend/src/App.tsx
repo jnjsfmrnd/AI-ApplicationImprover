@@ -1,7 +1,6 @@
 import { ChangeEvent, useEffect, useRef, useState } from "react";
 import {
   downloadPdf,
-  generateCoverLetter,
   generateTailoredResume,
   SkillGap,
   SkillProject,
@@ -19,7 +18,7 @@ export default function App() {
   const [inferredYear, setInferredYear] = useState<number | undefined>(undefined);
   const [selectedModel, setSelectedModel] = useState("gpt-4.1-mini");
   const [isGenerating, setIsGenerating] = useState(false);
-  const [isGeneratingCoverLetter, setIsGeneratingCoverLetter] = useState(false);
+  const [generationMode, setGenerationMode] = useState<"resume" | "resume-cover-letter" | null>(null);
   const [status, setStatus] = useState("Ready");
   const [modelName, setModelName] = useState("");
 
@@ -97,10 +96,15 @@ export default function App() {
   }
 
   const handleResumeChange = (e: ChangeEvent<HTMLTextAreaElement>) => setResumeText(e.target.value);
-  const handleJobDescriptionChange = (e: ChangeEvent<HTMLTextAreaElement>) => setJobDescription(e.target.value);
+  const handleJobDescriptionChange = (e: ChangeEvent<HTMLTextAreaElement>) => {
+    setJobDescription(e.target.value);
+    setInferredRole("Target Role");
+    setInferredIndustry("");
+    setInferredYear(undefined);
+  };
   const handleModelChange = (e: ChangeEvent<HTMLSelectElement>) => setSelectedModel(e.target.value);
 
-  async function runPipeline() {
+  async function runPipeline(includeCoverLetter: boolean) {
     if (resumeText.length < 20 || jobDescription.length < 20) {
       setStatus("Resume and JD need more detail before generation.");
       return;
@@ -111,17 +115,15 @@ export default function App() {
     }
 
     setIsGenerating(true);
+    setGenerationMode(includeCoverLetter ? "resume-cover-letter" : "resume");
     try {
-      setStatus("Running tailored resume pipeline...");
+      setStatus(includeCoverLetter ? "Running resume + cover letter pipeline..." : "Running tailored resume pipeline...");
       const pipelineInput = {
         resume_text: resumeText,
         job_description: jobDescription,
-        role: inferredRole !== "Target Role" ? inferredRole : undefined,
-        industry: inferredIndustry || undefined,
-        year: inferredYear,
         model: selectedModel,
         max_gap_skills: 3,
-        include_cover_letter: false,
+        include_cover_letter: includeCoverLetter,
       };
 
       const result: TailoredResumeResponse = await generateTailoredResume(pipelineInput);
@@ -132,43 +134,14 @@ export default function App() {
       setSkillSummary(result.skill_gap_summary);
       setSkillGaps(result.skill_gaps);
       setSkillProjects(result.skill_projects);
-      setCoverLetterOutput("");
+      setCoverLetterOutput(result.cover_letter || "");
       setTruthfulAtsOutput(result.truthful_ats.content);
-      setStatus("Generation complete.");
+      setStatus(includeCoverLetter ? "Resume + cover letter generation complete." : "Resume generation complete.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Generation failed");
     } finally {
       setIsGenerating(false);
-    }
-  }
-
-  async function runCoverLetterOnly() {
-    if (resumeText.length < 20 || jobDescription.length < 20) {
-      setStatus("Resume and JD need more detail before generation.");
-      return;
-    }
-
-    if (isGenerating || isGeneratingCoverLetter) {
-      return;
-    }
-
-    setIsGeneratingCoverLetter(true);
-    try {
-      setStatus("Generating optional cover letter...");
-      const content = await generateCoverLetter({
-        resume_text: resumeText,
-        job_description: jobDescription,
-        role: inferredRole !== "Target Role" ? inferredRole : undefined,
-        industry: inferredIndustry || undefined,
-        year: inferredYear,
-        model: selectedModel,
-      });
-      setCoverLetterOutput(content);
-      setStatus("Cover letter generation complete.");
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Cover letter generation failed");
-    } finally {
-      setIsGeneratingCoverLetter(false);
+      setGenerationMode(null);
     }
   }
 
@@ -217,9 +190,14 @@ export default function App() {
           {modelName ? ` • ${modelName}` : ""}
         </p>
 
-        <button onClick={runPipeline} disabled={isGenerating || resumeText.length < 20 || jobDescription.length < 20}>
-          {isGenerating ? "Generating..." : "Generate Tailored Resume"}
-        </button>
+        <div className="actions">
+          <button onClick={() => runPipeline(false)} disabled={isGenerating || resumeText.length < 20 || jobDescription.length < 20}>
+            {isGenerating && generationMode === "resume" ? "Generating Resume..." : "Generate Resume Only"}
+          </button>
+          <button onClick={() => runPipeline(true)} disabled={isGenerating || resumeText.length < 20 || jobDescription.length < 20}>
+            {isGenerating && generationMode === "resume-cover-letter" ? "Generating Resume + Cover Letter..." : "Generate Resume + Cover Letter"}
+          </button>
+        </div>
         <p className={`status-pill status-${statusTone}`}>
           {status}
         </p>
@@ -249,15 +227,7 @@ export default function App() {
 
       <section className="card">
         <h2>Cover Letter</h2>
-        {!coverLetterOutput && <p className="status">Optional: generate separately after resume output is ready.</p>}
-        <div className="actions">
-          <button
-            onClick={runCoverLetterOnly}
-            disabled={isGenerating || isGeneratingCoverLetter || resumeText.length < 20 || jobDescription.length < 20}
-          >
-            {isGeneratingCoverLetter ? "Generating Cover Letter..." : "Generate Cover Letter (Optional)"}
-          </button>
-        </div>
+        {!coverLetterOutput && <p className="status">Generate via “Resume + Cover Letter” above.</p>}
         <textarea value={coverLetterOutput} onChange={(e) => setCoverLetterOutput(e.target.value)} rows={14} />
         {coverLetterOutput && (
           <div className="actions">

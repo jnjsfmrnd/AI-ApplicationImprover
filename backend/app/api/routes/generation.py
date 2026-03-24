@@ -126,7 +126,8 @@ async def _infer_job_context(job_description: str) -> JobContextResponse:
 
 
 async def _resolve_generation_context(payload: GenerationInput) -> JobContextResponse:
-    has_role = bool((payload.role or "").strip())
+    role_value = (payload.role or "").strip()
+    has_role = bool(role_value) and role_value != DEFAULT_ROLE
     has_industry = bool((payload.industry or "").strip())
     has_company = bool((payload.company or "").strip())
     has_year = payload.year is not None
@@ -136,7 +137,7 @@ async def _resolve_generation_context(payload: GenerationInput) -> JobContextRes
         inferred = await _infer_job_context(payload.job_description)
 
     return JobContextResponse(
-        role=(payload.role or "").strip() or inferred.role or DEFAULT_ROLE,
+        role=role_value if has_role else (inferred.role or DEFAULT_ROLE),
         industry=(payload.industry or "").strip() or inferred.industry,
         company=(payload.company or "").strip() or inferred.company,
         year=payload.year if payload.year is not None else inferred.year,
