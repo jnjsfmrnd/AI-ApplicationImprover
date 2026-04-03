@@ -1,6 +1,7 @@
 import { ChangeEvent, useEffect, useRef, useState } from "react";
 import {
   downloadPdf,
+  fixUploadedPdfLayout,
   generateTailoredResume,
   SkillGap,
   SkillProject,
@@ -12,6 +13,7 @@ const MODEL_OPTIONS = ["gpt-4.1-mini", "gpt-4o-mini", "gpt-4.1", "gpt-4o"];
 
 export default function App() {
   const [resumeText, setResumeText] = useState("");
+  const [uploadedPdfFile, setUploadedPdfFile] = useState<File | null>(null);
   const [jobDescription, setJobDescription] = useState("");
   const [inferredRole, setInferredRole] = useState("Target Role");
   const [inferredIndustry, setInferredIndustry] = useState<string>("");
@@ -89,9 +91,26 @@ export default function App() {
       setStatus("Uploading resume...");
       const uploaded = await uploadResumeFile(file);
       setResumeText(uploaded.resume_text);
+      setUploadedPdfFile(file.name.toLowerCase().endsWith(".pdf") ? file : null);
       setStatus(`Uploaded ${uploaded.source_filename ?? "resume"}`);
     } catch (error) {
+      setUploadedPdfFile(null);
       setStatus(error instanceof Error ? error.message : "Upload failed");
+    }
+  }
+
+  async function onFixUploadedPdf() {
+    if (!uploadedPdfFile) {
+      setStatus("Upload a PDF resume first.");
+      return;
+    }
+
+    try {
+      setStatus("Fixing uploaded PDF layout...");
+      await fixUploadedPdfLayout(uploadedPdfFile);
+      setStatus("Uploaded PDF fixed and downloaded.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "PDF fix failed");
     }
   }
 
@@ -152,13 +171,20 @@ export default function App() {
       <section className="card">
         <h2>Input</h2>
         <label>
-          Upload Resume (.txt for current version)
+          Upload Resume (.txt, .pdf, .docx)
           <input
             type="file"
             accept=".txt,.pdf,.docx"
             onChange={(e: ChangeEvent<HTMLInputElement>) => onUpload(e.target.files?.[0] ?? null)}
           />
         </label>
+        {uploadedPdfFile && (
+          <div className="actions">
+            <button onClick={onFixUploadedPdf} disabled={isGenerating}>
+              Fix Uploaded PDF Layout
+            </button>
+          </div>
+        )}
 
         <label>
           Resume Text

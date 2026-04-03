@@ -9,7 +9,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
-from reportlab.platypus import KeepInFrame, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -151,19 +151,26 @@ def _normalize_filename(value: str) -> str:
 
 
 def _markdown_inline_to_reportlab(line: str) -> str:
+    # Remove all forced markdown or bold/italic conversion; output plain text only, except for job/company lines in EXPERIENCE section
     line = re.sub(r"(?<=\d)[–—−](?=\d)", "-", line)
-    line = re.sub(
-        r"^\s*(languages\s*(?:&|and)\s*frameworks)\s*:\s*",
-        lambda match: f"**{match.group(1).strip()}:** ",
-        line,
-        flags=re.IGNORECASE,
-    )
-    formatted = escape(line)
-    formatted = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", formatted)
-    formatted = re.sub(r"__(.+?)__", r"<b>\1</b>", formatted)
-    formatted = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<i>\1</i>", formatted)
-    formatted = re.sub(r"(?<!_)_(?!_)(.+?)(?<!_)_(?!_)", r"<i>\1</i>", formatted)
-    return formatted
+    # Remove any markdown bold/italic/underline from input (if present)
+    line = re.sub(r"\*\*(.+?)\*\*", r"\1", line)
+    line = re.sub(r"__(.+?)__", r"\1", line)
+    line = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"\1", line)
+    line = re.sub(r"(?<!_)_(?!_)(.+?)(?<!_)_(?!_)", r"\1", line)
+
+    # Bold job title and company if line matches EXPERIENCE entry pattern (Job Title, Company, ...)
+    # Example: Senior Software Engineer, Microsoft, Redmond, WA — 2021–2024
+    exp_match = re.match(r"^([A-Za-z0-9 .\-/()]+),\s*([A-Za-z0-9 .&\-/()]+),?\s*([A-Za-z0-9 .,&\-/()]+)?\s*[—\-]+\s*([0-9]{4}(?:–[0-9]{4}|–Present|–Current)?)$", line)
+    if exp_match:
+        job_title = exp_match.group(1).strip()
+        company = exp_match.group(2).strip()
+        rest = line[len(exp_match.group(0)) - len(line):] if len(exp_match.groups()) > 3 else ''
+        # Bold job title and company only
+        formatted = f"<b>{escape(job_title)}</b>, <b>{escape(company)}</b>{escape(line[len(job_title) + len(company) + 2:])}"
+        return formatted
+
+    return escape(line)
 
 
 def _strip_markdown_for_header(line: str) -> str:
@@ -174,6 +181,16 @@ def _strip_markdown_for_header(line: str) -> str:
     text = re.sub(r"(?<!_)_(?!_)(.*?)(?<!_)_(?!_)", r"\1", text)
     text = re.sub(r"^#{1,6}\s*", "", text)
     return text.strip()
+
+
+def _normalize_resume_export_text(text: str) -> str:
+    normalized = text.replace("\u202f", " ").replace("\u00a0", " ")
+    normalized = normalized.replace("\u2018", "'").replace("\u2019", "'")
+    normalized = normalized.replace("\u201c", '"').replace("\u201d", '"')
+    normalized = re.sub(r"(?m)^\s*[•·●▪◦]\s+", "- ", normalized)
+    normalized = re.sub(r"\s*[•·●▪◦]\s*", " | ", normalized)
+    normalized = re.sub(r"[‐‑‒–—−]", "-", normalized)
+    return normalized
 
 
 def _should_skip_line(line: str) -> bool:
@@ -521,25 +538,20 @@ async def generate_skill_projects(
 @router.post("/export/pdf/resume")
 async def export_pdf(payload: ExportPdfRequest) -> StreamingResponse:
     buffer = BytesIO()
+    normalized_content = _normalize_resume_export_text(payload.content)
 
-    # Original resume layout for multi-column documents
+    # ATS-friendly resume export: single-column, parser-safe, and no one-page forcing.
     reserved_header_height = 1.12 * inch
+    import reportlab.lib.pagesizes
     document = SimpleDocTemplate(
         buffer,
-        pagesize=letter,
+        pagesize=reportlab.lib.pagesizes.letter,
         leftMargin=0.42 * inch,
         rightMargin=0.42 * inch,
-        topMargin=0.45 * inch + reserved_header_height,
+        topMargin=0.45 * inch,
         bottomMargin=0.5 * inch,
         title=payload.title,
     )
-
-    column_gap = 0.42 * inch
-    available_width = letter[0] - document.leftMargin - document.rightMargin
-    right_column_ratio = 0.38
-    right_column_width = (available_width - column_gap) * right_column_ratio
-    left_column_width = (available_width - column_gap) - right_column_width
-    available_height = letter[1] - document.topMargin - document.bottomMargin
 
     styles = getSampleStyleSheet()
     body_style = ParagraphStyle(
@@ -586,13 +598,11 @@ async def export_pdf(payload: ExportPdfRequest) -> StreamingResponse:
 
     header_lines: list[str] = []
     summary_lines: list[str] = []
-    right_lines: list[str] = []
-    left_lines: list[str] = []
-    active_column = "left"
+    body_lines: list[str] = []
     in_header = True
     in_summary = False
 
-    for raw_line in payload.content.split("\n"):
+    for raw_line in normalized_content.split("\n"):
         line = raw_line.strip()
 
         if _should_skip_line(line):
@@ -600,10 +610,14 @@ async def export_pdf(payload: ExportPdfRequest) -> StreamingResponse:
         if line in {"--", "---", "----"}:
             continue
 
-        mapped_column = _map_heading_column(line)
         is_summary = _is_summary_heading(line)
+        heading = _extract_heading_text(line)
 
-        if in_header and (mapped_column or is_summary):
+        # A summary heading always ends the header phase.
+        # Any other heading only ends the header phase after at least one contact line
+        # has already been collected — otherwise an all-caps name on the first line
+        # (detected as a heading) would leave header_lines empty.
+        if in_header and (is_summary or (heading and len(header_lines) >= 1)):
             in_header = False
 
         if in_header:
@@ -616,18 +630,16 @@ async def export_pdf(payload: ExportPdfRequest) -> StreamingResponse:
             summary_lines.append(line)
             continue
 
-        if mapped_column:
+        if heading and in_summary:
             in_summary = False
-            active_column = mapped_column
 
         if in_summary:
             summary_lines.append(line)
             continue
 
-        target = right_lines if active_column == "right" else left_lines
-        target.append(line)
+        body_lines.append(line)
 
-    def _build_column_flowables(lines: list[str], allow_name_emphasis: bool) -> list:
+    def _build_flowables(lines: list[str], allow_name_emphasis: bool, *, paragraph_style: ParagraphStyle) -> list:
         target_story: list = []
         rendered_name = False
 
@@ -659,82 +671,103 @@ async def export_pdf(payload: ExportPdfRequest) -> StreamingResponse:
                 )
                 continue
 
-            target_story.append(Paragraph(_markdown_inline_to_reportlab(line), body_style))
+            target_story.append(Paragraph(_markdown_inline_to_reportlab(line), paragraph_style))
 
         return target_story
 
-    right_flowables = _build_column_flowables(right_lines, allow_name_emphasis=False)
-    left_flowables = _build_column_flowables(left_lines, allow_name_emphasis=False)
-
-    # Build summary flowables early so we can measure their height and subtract
-    # it from the column frame, keeping everything on one page.
-    def _build_summary_flowables(lines: list[str]) -> list:
-        result: list = []
-        for line in lines:
-            if not line:
-                result.append(Spacer(1, 2))
-                continue
-            hm = re.match(r"^#{1,6}\s*(.+)$", line)
-            if hm:
-                result.append(Paragraph(_markdown_inline_to_reportlab(hm.group(1).strip()), heading_style))
-                continue
-            dh = _extract_heading_text(line)
-            if dh and dh == re.sub(r"[*_#`]", "", line).strip():
-                result.append(Paragraph(_markdown_inline_to_reportlab(dh), heading_style))
-                continue
-            if line.startswith("- ") or line.startswith("* "):
-                result.append(Paragraph(_markdown_inline_to_reportlab(line[2:].strip()), bullet_style, bulletText="•"))
-                continue
-            result.append(Paragraph(_markdown_inline_to_reportlab(line), summary_style))
-        if result:
-            result.append(Spacer(1, 10))
-        return result
-
-    summary_section_flowables = _build_summary_flowables(summary_lines)
-
-    # Measure rendered summary height so column boxes don't overflow the page.
-    summary_height = sum(fl.wrap(available_width, 9999)[1] for fl in summary_section_flowables)
-
-    # SimpleDocTemplate adds 6pt internal padding on each side of its body frame,
-    # so the actual usable frame height is available_height - 12.  We subtract
-    # an additional 8 pt buffer so the KeepInFrame's rendered height never
-    # exceeds the frame and triggers a LayoutError.
-    column_max_height = max(available_height - summary_height - 20, 2 * inch)
-
-    left_column_box = KeepInFrame(
-        maxWidth=left_column_width,
-        maxHeight=column_max_height,
-        content=left_flowables,
-        mode="shrink",
-        hAlign="LEFT",
-        vAlign="TOP",
-    )
-    right_column_box = KeepInFrame(
-        maxWidth=right_column_width,
-        maxHeight=column_max_height,
-        content=right_flowables,
-        mode="shrink",
-        hAlign="LEFT",
-        vAlign="TOP",
+    summary_section_flowables = _build_flowables(
+        summary_lines,
+        allow_name_emphasis=False,
+        paragraph_style=summary_style,
     )
 
-    columns_table = Table(
-        [[left_column_box, "", right_column_box]],
-        colWidths=[left_column_width, column_gap, right_column_width],
-        hAlign="LEFT",
-    )
-    columns_table.setStyle(
-        TableStyle(
-            [
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-                ("TOPPADDING", (0, 0), (-1, -1), 0),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-                ("RIGHTPADDING", (0, 0), (0, 0), 6),
-                ("LEFTPADDING", (2, 0), (2, 0), 3),
-            ]
+    # Split body_lines at the PROJECTS section to insert a page break after it
+    projects_idx = None
+    for idx, line in enumerate(body_lines):
+        if _extract_heading_text(line) and _extract_heading_text(line).strip().upper() == "PROJECTS":
+            projects_idx = idx
+            break
+
+    # Find the end of the PROJECTS section (next heading or end of body_lines)
+    page1_lines = body_lines
+    page2_lines = []
+    if projects_idx is not None:
+        # Find next heading after PROJECTS
+        end_projects_idx = None
+        for idx in range(projects_idx + 1, len(body_lines)):
+            if _extract_heading_text(body_lines[idx]):
+                end_projects_idx = idx
+                break
+        if end_projects_idx is None:
+            end_projects_idx = len(body_lines)
+        page1_lines = body_lines[:end_projects_idx]
+        page2_lines = body_lines[end_projects_idx:]
+
+
+    # --- Dynamic font scaling for first page ---
+    from reportlab.platypus import Frame, PageTemplate, BaseDocTemplate
+    from reportlab.lib.pagesizes import letter
+    import copy
+
+    def build_scaled_flowables(font_size: float, lines: list[str]) -> list:
+        scaled_body_style = copy.deepcopy(body_style)
+        scaled_heading_style = copy.deepcopy(heading_style)
+        scaled_bullet_style = copy.deepcopy(bullet_style)
+        scaled_name_style = copy.deepcopy(name_style)
+        scaled_summary_style = copy.deepcopy(summary_style)
+        # Scale all font sizes proportionally
+        scale = font_size / body_style.fontSize
+        scaled_body_style.fontSize = font_size
+        scaled_body_style.leading = int(body_style.leading * scale)
+        scaled_heading_style.fontSize = max(9, int(heading_style.fontSize * scale))
+        scaled_heading_style.leading = int(heading_style.leading * scale)
+        scaled_bullet_style.fontSize = font_size
+        scaled_bullet_style.leading = int(bullet_style.leading * scale) if hasattr(bullet_style, 'leading') else int(body_style.leading * scale)
+        scaled_name_style.fontSize = int(name_style.fontSize * scale)
+        scaled_name_style.leading = int(name_style.leading * scale)
+        scaled_summary_style.fontSize = max(8, int(summary_style.fontSize * scale))
+        scaled_summary_style.leading = int(summary_style.leading * scale)
+        return _build_flowables(
+            lines,
+            allow_name_emphasis=False,
+            paragraph_style=scaled_body_style,
         )
+
+    # Try to fit all page1_lines on one page by scaling font size down if needed
+    min_font_size = 7.5
+    max_font_size = body_style.fontSize
+    test_font_size = max_font_size
+    fitted = False
+    page1_flowables = None
+    while test_font_size >= min_font_size:
+        test_flowables = build_scaled_flowables(test_font_size, page1_lines)
+        # Create a test doc to measure height
+        test_buffer = BytesIO()
+        test_doc = SimpleDocTemplate(
+            test_buffer,
+            pagesize=letter,
+            leftMargin=document.leftMargin,
+            rightMargin=document.rightMargin,
+            topMargin=document.topMargin + reserved_header_height,
+            bottomMargin=document.bottomMargin,
+        )
+        # Only measure the first page
+        try:
+            test_doc.build(test_flowables[:], onFirstPage=None)
+            fitted = True
+            page1_flowables = test_flowables
+            break
+        except Exception:
+            test_font_size -= 0.5
+    if not fitted:
+        # Fallback: use min font size
+        page1_flowables = build_scaled_flowables(min_font_size, page1_lines)
+
+    # Page 2 and later: normal font size
+    page2_flowables = _build_flowables(
+        page2_lines,
+        allow_name_emphasis=False,
+        paragraph_style=body_style,
     )
 
     header_name = ""
@@ -761,7 +794,8 @@ async def export_pdf(payload: ExportPdfRequest) -> StreamingResponse:
 
         canv.saveState()
         x = doc.leftMargin
-        y = letter[1] - 0.56 * inch
+        import reportlab.lib.pagesizes
+        y = reportlab.lib.pagesizes.letter[1] - 0.56 * inch
 
         if header_name:
             canv.setFont("Helvetica-Bold", 17)
@@ -781,12 +815,21 @@ async def export_pdf(payload: ExportPdfRequest) -> StreamingResponse:
 
         canv.restoreState()
 
-    # Build story with optional negative spacer to close gap between header and summary
+    # Reserve header space on page 1 only; later pages should use the normal top margin.
     story: list = []
+    story.append(Spacer(1, reserved_header_height))
+
+    # Build story with optional negative spacer to close gap between header and summary.
     if summary_section_flowables:
         story.append(Spacer(1, -24))  # Negative spacer pulls summary closer to header
         story.extend(summary_section_flowables)
-    story.append(columns_table)
+        story.append(Spacer(1, 8))
+
+    story.extend(page1_flowables)
+    if page2_flowables:
+        from reportlab.platypus import PageBreak
+        story.append(PageBreak())
+        story.extend(page2_flowables)
 
     document.build(story, onFirstPage=draw_first_page_header)
     buffer.seek(0)

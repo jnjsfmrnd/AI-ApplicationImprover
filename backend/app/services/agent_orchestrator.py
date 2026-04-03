@@ -14,6 +14,17 @@ from app.services.prompt_modules.skill_projects import build_skill_project_promp
 
 
 class AgentOrchestrator:
+    _SUMMARY_HEADINGS = {
+        "professional summary",
+        "summary",
+        "career summary",
+        "professional profile",
+        "profile",
+        "about me",
+        "objective",
+        "career objective",
+    }
+
     def _build_adaptation_note(self, skill: str, related_experience: str) -> str:
         clean_skill = skill.strip()
         clean_experience = related_experience.strip().rstrip(".")
@@ -27,6 +38,72 @@ class AgentOrchestrator:
         today = date.today()
         formatted_today = f"{today:%B} {today.day}, {today:%Y}"
         return re.sub(r"\[date\]", formatted_today, text, flags=re.IGNORECASE)
+
+    def _normalize_resume_text(self, text: str) -> str:
+        normalized = text.replace("\u202f", " ").replace("\u00a0", " ")
+        normalized = normalized.replace("\u2018", "'").replace("\u2019", "'")
+        normalized = normalized.replace("\u201c", '"').replace("\u201d", '"')
+        normalized = re.sub(r"(?m)^\s*[•·●▪◦]\s+", "- ", normalized)
+        normalized = re.sub(r"\s*[•·●▪◦]\s*", " | ", normalized)
+        normalized = re.sub(r"[‐‑‒–—−]", "-", normalized)
+        normalized = re.sub(r"[ \t]+", " ", normalized)
+        return "\n".join(line.rstrip() for line in normalized.splitlines()).strip()
+
+    def _extract_heading_label(self, line: str) -> str | None:
+        heading_match = re.match(r"^#{1,6}\s*(.+)$", line.strip())
+        if heading_match:
+            return heading_match.group(1).strip().lower()
+
+        plain = re.sub(r"[*_`]+", "", line).strip()
+        if not plain:
+            return None
+
+        letters = [char for char in plain if char.isalpha()]
+        if letters and sum(1 for char in letters if char.isupper()) / len(letters) >= 0.85 and len(plain.split()) <= 6:
+            return plain.lower()
+        return None
+
+    def _extract_summary_block(self, text: str) -> list[str]:
+        lines = text.splitlines()
+        for index, line in enumerate(lines):
+            heading = self._extract_heading_label(line)
+            if heading not in self._SUMMARY_HEADINGS:
+                continue
+
+            block = [line]
+            for candidate in lines[index + 1 :]:
+                candidate_heading = self._extract_heading_label(candidate)
+                if candidate_heading and candidate.strip():
+                    break
+                block.append(candidate)
+
+            while block and not block[-1].strip():
+                block.pop()
+            return block
+        return []
+
+    def _restore_summary_section(self, source_resume: str, optimized_resume: str) -> str:
+        source_summary = self._extract_summary_block(source_resume)
+        optimized_summary = self._extract_summary_block(optimized_resume)
+        if not source_summary or len(optimized_summary) > 1:
+            return optimized_resume
+
+        lines = optimized_resume.splitlines()
+        insert_at = len(lines)
+        for index, line in enumerate(lines):
+            heading = self._extract_heading_label(line)
+            if heading:
+                insert_at = index
+                break
+
+        rebuilt = lines[:insert_at]
+        if rebuilt and rebuilt[-1].strip():
+            rebuilt.append("")
+        rebuilt.extend(source_summary)
+        if insert_at < len(lines):
+            rebuilt.append("")
+            rebuilt.extend(lines[insert_at:])
+        return "\n".join(rebuilt).strip()
 
     def _extract_json_object(self, text: str) -> dict:
         start = text.find("{")
@@ -278,25 +355,22 @@ class AgentOrchestrator:
             if not line:
                 continue
 
-            heading_match = re.match(r"^#{1,6}\s*(.+)$", line)
-            if heading_match:
-                heading = heading_match.group(1).strip().lower()
+            heading = self._extract_heading_label(line)
+            if heading:
                 headings.add(heading)
-                continue
-
-            plain = re.sub(r"[*_`]+", "", line).strip()
-            letters = [char for char in plain if char.isalpha()]
-            if letters and sum(1 for char in letters if char.isupper()) / len(letters) >= 0.85 and len(plain.split()) <= 6:
-                headings.add(plain.lower())
 
         return headings
 
     def _guard_truthful_ats_output(self, source_resume: str, optimized_resume: str) -> str:
-        source_headings = self._extract_heading_set(source_resume)
-        optimized_headings = self._extract_heading_set(optimized_resume)
+        normalized_source = self._normalize_resume_text(source_resume)
+        normalized_optimized = self._normalize_resume_text(optimized_resume)
+        normalized_optimized = self._restore_summary_section(normalized_source, normalized_optimized)
+
+        source_headings = self._extract_heading_set(normalized_source)
+        optimized_headings = self._extract_heading_set(normalized_optimized)
         if optimized_headings - source_headings:
-            return source_resume
-        return optimized_resume
+            return normalized_source
+        return normalized_optimized
 
     async def recruiter_rewrite(
         self,
@@ -318,7 +392,7 @@ class AgentOrchestrator:
             skill_gap_context=skill_gap_context,
             project_context=project_context,
         )
-        return await llm_provider.generate(system, user)
+        return self._normalize_resume_text(await llm_provider.generate(system, user))
 
     async def ats_optimize(
         self,
@@ -336,7 +410,11 @@ class AgentOrchestrator:
             year,
             variant_label=variant_label,
         )
-        return await llm_provider.generate(system, user)
+        optimized_resume = await llm_provider.generate(system, user)
+        return self._restore_summary_section(
+            self._normalize_resume_text(resume_text),
+            self._normalize_resume_text(optimized_resume),
+        )
 
     async def cover_letter(
         self,

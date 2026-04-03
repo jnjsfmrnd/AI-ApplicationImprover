@@ -85,6 +85,25 @@ export async function uploadResumeFile(file: File): Promise<{ resume_text: strin
   return res.json();
 }
 
+export async function fixUploadedPdfLayout(file: File): Promise<void> {
+  const data = new FormData();
+  data.append("file", file);
+
+  const res = await fetch(`${API_BASE}/resume/fix-pdf-layout`, { method: "POST", body: data });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(detail || `PDF fix failed: ${res.status}`);
+  }
+
+  const blob = await res.blob();
+  const url = window.URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${file.name.replace(/\.pdf$/i, "")}_fixed.pdf`;
+  anchor.click();
+  window.URL.revokeObjectURL(url);
+}
+
 export async function generateRewrite(input: GenerationInput): Promise<string> {
   const data = await postJson<{ content: string }>("/generate/rewrite", input);
   return data.content;

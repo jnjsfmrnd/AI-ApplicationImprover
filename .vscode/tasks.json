@@ -1,0 +1,42 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run backend",
+			"type": "shell",
+			"command": "c:/Users/janjo/Documents/Projects/AI-ApplicationImprover/.venv/Scripts/python.exe",
+			"args": [
+				"-m",
+				"uvicorn",
+				"app.main:app",
+				"--reload",
+				"--port",
+				"8000",
+				"--app-dir",
+				"backend",
+				"--reload-dir",
+				"backend/app"
+			],
+			"isBackground": true
+		},
+		{
+			"label": "Run frontend",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"dev",
+				"--",
+				"--host",
+				"0.0.0.0"
+			],
+			"isBackground": true
+		},
+		{
+			"label": "Run frontend from frontend dir",
+			"type": "shell",
+			"command": "Set-Location frontend; npm run dev -- --host 0.0.0.0",
+			"isBackground": true
+		}
+	]
+}
